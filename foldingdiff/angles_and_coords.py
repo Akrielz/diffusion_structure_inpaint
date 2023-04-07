@@ -3,6 +3,7 @@ Code to convert from angles between residues to XYZ coordinates.
 """
 import functools
 import gzip
+import math
 import os
 import logging
 import glob
@@ -11,10 +12,13 @@ from itertools import groupby
 from typing import *
 import warnings
 
+import biotite
 import numpy as np
 import pandas as pd
 
 import biotite.structure as struc
+import torch
+from biotite.structure import AtomArray
 from biotite.structure.io.pdb import PDBFile
 from biotite.sequence import ProteinSequence
 
@@ -119,6 +123,167 @@ def canonical_distances_and_dihedrals(
     return pd.DataFrame({k: calc_angles[k].squeeze() for k in distances + angles})
 
 
+def compute_coords_from_all(phi, psi, omega, tau, CAC1N, C1NCA):
+    bond_lengths = {'N_CA': 1.458, 'CA_C': 1.525, 'C_N+1': 1.330}
+    N_CA_unit = np.array([math.cos(phi), math.sin(phi), 0])
+    CA_C_unit = np.array([math.cos(psi), math.sin(psi), 0])
+    C_N1_unit = np.array([math.cos(omega), math.sin(omega), 0])
+    normal_vector = np.cross(CA_C_unit, N_CA_unit)
+    R1 = np.array([[math.cos(tau), -math.sin(tau), 0], [math.sin(tau), math.cos(tau), 0], [0, 0, 1]])
+    R2 = np.array([[1, 0, 0], [0, math.cos(CAC1N), -math.sin(CAC1N)], [0, math.sin(CAC1N), math.cos(CAC1N)]])
+    R3 = np.array([[math.cos(C1NCA), -math.sin(C1NCA), 0], [math.sin(C1NCA), math.cos(C1NCA), 0], [0, 0, 1]])
+    C_N1 = -1 * bond_lengths['C_N+1'] * C_N1_unit
+    N = np.array([0, 0, 0])
+    CA = N + bond_lengths['N_CA'] * N_CA_unit
+    C = CA + bond_lengths['CA_C'] * CA_C_unit
+    C_N1_rotated = np.dot(R1, C_N1)
+    N_rotated = np.dot(R2, N)
+    CA_rotated = np.dot(R2, CA)
+    C_rotated = np.dot(R3, C)
+
+    coords = {
+        'N': N_rotated,
+        'CA': CA_rotated,
+        'C': C_rotated,
+    }
+    return coords
+
+
+def compute_coords(
+        phi: float,
+        psi: float,
+        omega: float
+):
+    """
+    Compute the coordinates of the CA, C, and N atoms of a residue
+    based on its phi, psi, and omega angles.
+
+    Parameters
+    ----------
+    phi : float
+        The phi angle (in degrees).
+    psi : float
+        The psi angle (in degrees).
+    omega : float
+        The omega angle (in degrees).
+
+    Returns
+    -------
+    coords : dict of Vector objects
+        A dictionary with keys 'CA', 'C', and 'N', each pointing to
+        a Vector object containing the coordinates of the respective atom.
+    """
+    phi, psi, omega = np.radians([phi, psi, omega])
+    N_coords = np.array([-np.sin(phi), np.cos(phi), 0])
+    CA_coords = np.array([np.cos(psi), np.sin(psi), 0])
+    C_coords = np.array([-np.cos(omega), -np.sin(omega), 0])
+    coords = {'N': N_coords, 'CA': CA_coords, 'C': C_coords}
+    return coords
+
+
+def convert_angles_to_coords(
+        angles: pd.DataFrame,
+        atom_array: AtomArray,
+        replaced_info_mask: torch.Tensor
+):
+    """
+    Convert the phi, psi, and omega angles of a protein into atomic coordinates.
+
+    Parameters
+    ----------
+    angles : pd.DataFrame
+        A DataFrame with columns 'phi', 'psi', 'omega', 'tau', 'CA:C:1N', 'C:1N:1CA',
+        where each row represents the angles of a residue.
+    atom_array : AtomArray
+        The original AtomArray from the PDB file, without the angle changes.
+    replaced_info_mask : torch.Tensor
+        A binary tensor of shape (n_residues,), where a 1 indicates that the corresponding
+        residue has updated angles.
+
+    Returns
+    -------
+    new_atom_array : AtomArray
+        The new AtomArray with updated coordinates based on the new angles.
+    """
+
+    from biotite.structure import array as struc_array
+
+    new_residues = []
+    for i, residue in enumerate(biotite.structure.residue_iter(atom_array)):
+
+        if replaced_info_mask[0][i] == 0:
+            new_residues.append(residue)
+            continue
+
+        phi, psi, omega, tau, CAC1N, C1N1CA = \
+            angles.iloc[i][['phi', 'psi', 'omega', 'tau', 'CA:C:1N', 'C:1N:1CA']]
+        # coords = compute_coords(phi, psi, omega)
+        coords = compute_coords_from_all(phi, psi, omega, tau, CAC1N, C1N1CA)
+
+        # Create new atom with the updated coordinates
+        ca_atom = biotite.structure.Atom(
+            coord=coords['CA'],
+            chain_id=residue[0].chain_id,
+            res_id=residue[0].res_id,
+            ins_code=residue[0].ins_code,
+            res_name=residue[0].res_name,
+            hetero=residue[0].hetero,
+            atom_name='CA',
+            element='C',
+        )
+
+        c_atom = biotite.structure.Atom(
+            coord=coords['C'],
+            chain_id=residue[0].chain_id,
+            res_id=residue[0].res_id,
+            ins_code=residue[0].ins_code,
+            res_name=residue[0].res_name,
+            hetero=residue[0].hetero,
+            atom_name='C',
+            element='C',
+        )
+
+        n_atom = biotite.structure.Atom(
+            coord=coords['N'],
+            chain_id=residue[0].chain_id,
+            res_id=residue[0].res_id,
+            ins_code=residue[0].ins_code,
+            res_name=residue[0].res_name,
+            hetero=residue[0].hetero,
+            atom_name='N',
+            element='N',
+        )
+
+        residue = [ca_atom, c_atom, n_atom]
+        new_residue = struc_array(residue)
+        new_residues.append(new_residue)
+
+    atom_arrays = []
+    for i, residue in enumerate(new_residues):
+        for atom in residue:
+            atom_arrays.append(atom)
+
+    new_atom_array = struc_array(atom_arrays)
+
+    return new_atom_array
+
+
+def create_corrected_structure(
+        out_fname: str,
+        angles: pd.DataFrame,
+        initial_atom_array: AtomArray,
+        replaced_info_mask: torch.Tensor,
+) -> str:
+    new_atom_array = convert_angles_to_coords(
+        angles=angles,
+        atom_array=initial_atom_array,
+        replaced_info_mask=replaced_info_mask
+    )
+
+    write_atom_array_to_pdb(new_atom_array, out_fname)
+    return out_fname
+
+
 def create_new_chain_nerf(
     out_fname: str,
     dists_and_angles: pd.DataFrame,
@@ -192,6 +357,14 @@ def create_new_chain_nerf(
         3,
     ), f"Unexpected shape: {coords.shape} for input of {len(dists_and_angles)}"
     return write_coords_to_pdb(coords, out_fname)
+
+
+def write_atom_array_to_pdb(atom_array: AtomArray, out_fname: str) -> str:
+    sink = PDBFile()
+    sink.set_structure(atom_array)
+    sink.write(out_fname)
+
+    return out_fname
 
 
 def write_coords_to_pdb(coords: np.ndarray, out_fname: str) -> str:

@@ -76,6 +76,90 @@ def p_sample(
 
 
 @torch.no_grad()
+def p_sample_loop_missing_info(
+        model: nn.Module,
+        lengths: Sequence[int],
+        noise_list: torch.Tensor,
+        original_angles: torch.Tensor,
+        missing_info_mask: torch.Tensor,
+        timesteps: int,
+        betas: torch.Tensor,
+        is_angle: List[bool],
+        disable_pbar: bool = False,
+) -> torch.Tensor:
+    """
+    Returns a tensor of shape (timesteps, batch_size, seq_len, n_ft)
+    """
+
+    # Get device
+    device = next(model.parameters()).device
+
+    # Get batch size
+    b = noise_list[0].shape[0]
+
+    # Compute the mask for the missing info
+    not_missing_info_mask = 1 - missing_info_mask
+    not_missing_info_mask = not_missing_info_mask.to(torch.bool)
+    not_missing_info_mask = not_missing_info_mask.to(device)
+    not_missing_info_mask = not_missing_info_mask.repeat(b, 1)
+
+    # Put the noise list on the device
+    noise_list = noise_list.to(device)
+    full_noise = noise_list[-1]
+
+    original_angles = original_angles.to(device)
+
+    img = full_noise.to(device)
+
+    # Report metrics on starting noise
+    # amin and amax support reducing on multiple dimensions
+    logging.info(
+        f"Starting from noise {full_noise.shape} with angularity {is_angle} "
+        f"and range {torch.amin(img, dim=(0, 1))} - {torch.amax(img, dim=(0, 1))} using {device}"
+    )
+
+    imgs = []
+
+    for t in tqdm(
+        reversed(range(0, timesteps)),
+        desc="sampling loop time step",
+        total=timesteps,
+        disable=disable_pbar,
+    ):
+        # Replace the non-missing info with the adequate angles noise
+        img[not_missing_info_mask] = noise_list[t][not_missing_info_mask]
+
+        # Shape is (batch, seq_len, 6)
+        img = p_sample(
+            model=model,
+            x=img,
+            t=torch.full((b,), t, device=device, dtype=torch.long),  # time vector
+            seq_lens=lengths,
+            t_index=t,
+            betas=betas,
+        )
+
+        # Wrap if angular
+        if isinstance(is_angle, bool):
+            if is_angle:
+                img = utils.modulo_with_wrapped_range(
+                    img, range_min=-torch.pi, range_max=torch.pi
+                )
+        else:
+            assert len(is_angle) == img.shape[-1]
+            for j in range(img.shape[-1]):
+                if is_angle[j]:
+                    img[:, :, j] = utils.modulo_with_wrapped_range(
+                        img[:, :, j], range_min=-torch.pi, range_max=torch.pi
+                    )
+
+        imgs.append(img.cpu())
+
+    imgs[-1][not_missing_info_mask] = original_angles.repeat(b, 1, 1).cpu()[not_missing_info_mask]
+    return torch.stack(imgs)
+
+
+@torch.no_grad()
 def p_sample_loop(
     model: nn.Module,
     lengths: Sequence[int],
@@ -130,6 +214,73 @@ def p_sample_loop(
                     )
         imgs.append(img.cpu())
     return torch.stack(imgs)
+
+
+def sample_missing_structure(
+        model: nn.Module,
+        train_dset: dsets.NoisedAnglesDataset,
+        original_length: int,
+        missing_info_mask: torch.Tensor,
+        original_features: Dict[str, torch.Tensor],
+        n: int = 10,
+        batch_size: int = 512,
+        feature_key: str = "angles",
+        disable_pbar: bool = False,
+):
+    # Compute lengths for each sample
+    lengths = [original_length] * n
+    lengths_chunkified = [
+        lengths[i : i + batch_size] for i in range(0, len(lengths), batch_size)
+    ]
+
+    # Get original angles
+    original_angles = original_features["angles"]
+
+    logging.info(f"Sampling {len(lengths)} items in batches of size {batch_size}")
+    return_values = []
+    for this_lengths in lengths_chunkified:
+        batch = len(this_lengths)
+
+        # repeat the original angles batch times
+        original_angles_batch = original_angles.repeat(batch, 1, 1)
+
+        noise_list = train_dset.sample_full_list_of_noise(original_angles_batch)
+
+        sampled_angles = p_sample_loop_missing_info(
+            model=model,
+            lengths=this_lengths,
+            noise_list=noise_list,
+            timesteps=train_dset.timesteps,
+            betas=train_dset.alpha_beta_terms["betas"],
+            is_angle=train_dset.feature_is_angular[feature_key],
+            disable_pbar=disable_pbar,
+            original_angles=original_angles,
+            missing_info_mask=missing_info_mask
+        )
+
+        # Gets to size (timesteps, seq_len, n_ft)
+        trimmed_sampled = [
+            sampled_angles[:, i, :l, :].numpy() for i, l in enumerate(this_lengths)
+        ]
+        return_values.extend(trimmed_sampled)
+
+    if (
+        hasattr(train_dset, "dset")
+        and hasattr(train_dset.dset, "get_masked_means")
+        and train_dset.dset.get_masked_means() is not None
+    ):
+        logging.info(
+            f"Shifting predicted values by original offset: {train_dset.dset.get_masked_means()}"
+        )
+        retval = [s + train_dset.dset.get_masked_means() for s in return_values]
+        # Because shifting may have caused us to go across the circle boundary, re-wrap
+        angular_idx = np.where(train_dset.feature_is_angular[feature_key])[0]
+        for s in retval:
+            s[..., angular_idx] = utils.modulo_with_wrapped_range(
+                s[..., angular_idx], range_min=-np.pi, range_max=np.pi
+            )
+
+    return return_values
 
 
 def sample(

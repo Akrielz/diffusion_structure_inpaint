@@ -103,6 +103,7 @@ class CathCanonicalAnglesDataset(Dataset):
         pdbs: Union[
             Literal["cath", "alphafold"], str
         ] = "cath",  # Keyword or a directory
+        fnames: Optional[List[str]] = None,
         split: Optional[Literal["train", "test", "validation"]] = None,
         pad: int = 512,
         min_length: int = 40,  # Set to 0 to disable
@@ -120,7 +121,8 @@ class CathCanonicalAnglesDataset(Dataset):
 
         # gather files
         self.pdbs_src = pdbs
-        fnames = self.__get_pdb_fnames(pdbs)
+        if fnames is None:
+            fnames = self.__get_pdb_fnames(pdbs)
         self.fnames = fnames
 
         # self.structures should be a list of dicts with keys (angles, coords, fname)
@@ -140,7 +142,7 @@ class CathCanonicalAnglesDataset(Dataset):
             fnames = fnames[:toy]
 
             logging.info(f"Loading toy dataset of {toy} structures")
-            self.structures = self.__compute_featurization(fnames)
+            self.structures = self.compute_featurization(fnames)
         elif use_cache and os.path.exists(self.cache_fname):
             logging.info(f"Loading cached full dataset from {self.cache_fname}")
             with open(self.cache_fname, "rb") as source:
@@ -156,7 +158,7 @@ class CathCanonicalAnglesDataset(Dataset):
         # We have not yet populated self.structures
         if self.structures is None:
             self.__clean_mismatched_caches()
-            self.structures = self.__compute_featurization(fnames)
+            self.structures = self.compute_featurization(fnames)
             if use_cache and not codebase_matches_hash:
                 logging.info(f"Saving full dataset to cache at {self.cache_fname}")
                 with open(self.cache_fname, "wb") as sink:
@@ -301,8 +303,9 @@ class CathCanonicalAnglesDataset(Dataset):
                 logging.info(f"Removing old cache file {fname}")
                 os.remove(fname)
 
-    def __compute_featurization(
-        self, fnames: Sequence[str]
+    @staticmethod
+    def compute_featurization(
+        fnames: Sequence[str]
     ) -> List[Dict[str, np.ndarray]]:
         """Get the featurization of the given fnames"""
         pfunc = functools.partial(
@@ -335,6 +338,11 @@ class CathCanonicalAnglesDataset(Dataset):
                 }
             )
         return structures
+
+    @staticmethod
+    def compute_features_for_one_file(file_path):
+        features = CathCanonicalAnglesDataset.compute_featurization([file_path])[0]
+        return features
 
     def sample_length(self, n: int = 1) -> Union[int, List[int]]:
         """
@@ -797,6 +805,31 @@ class NoisedAnglesDataset(Dataset):
         )
 
         return noise
+
+    def sample_full_list_of_noise(self, vals: torch.Tensor) -> torch.Tensor:
+        """
+        Sample noise for each timestep and return a tensor of shape
+        (time_steps, batch, len, feat)
+
+        The first step should be almost equal to original vals, but with a bit of noise
+        The last step should be equal to the full noise
+        """
+
+        time_steps = [i for i in range(self.timesteps)]
+        full_noise = self.sample_noise(vals)
+
+        partial_noises = []
+        for t in time_steps:
+            sqrt_alphas_cumprod_t = self.alpha_beta_terms["sqrt_alphas_cumprod"][t]
+            sqrt_one_minus_alphas_cumprod_t = self.alpha_beta_terms[
+                "sqrt_one_minus_alphas_cumprod"
+            ][t]
+
+            partial_noises.append(
+                sqrt_alphas_cumprod_t * vals + sqrt_one_minus_alphas_cumprod_t * full_noise
+            )
+
+        return torch.stack(partial_noises, dim=0)
 
     def __getitem__(
         self,
