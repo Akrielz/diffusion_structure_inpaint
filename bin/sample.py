@@ -27,7 +27,7 @@ from foldingdiff import modelling
 from foldingdiff import sampling
 from foldingdiff import plotting
 from foldingdiff.datasets import AnglesEmptyDataset, NoisedAnglesDataset
-from foldingdiff.angles_and_coords import create_new_chain_nerf, create_corrected_structure
+from foldingdiff.angles_and_coords import create_new_chain_nerf_to_file, create_corrected_structure
 from foldingdiff import utils
 
 # :)
@@ -123,7 +123,7 @@ def write_preds_pdb_folder(
     ]
     # Write in parallel
     with multiprocessing.Pool(threads) as pool:
-        files_written = pool.starmap(create_new_chain_nerf, arg_tuples)
+        files_written = pool.starmap(create_new_chain_nerf_to_file, arg_tuples)
 
     return files_written
 
@@ -149,6 +149,9 @@ def write_corrected_structures(
         (os.path.join(outdir, f"{basename_prefix}{i}.pdb"), samp, to_correct_atom_array, to_correct_mask)
         for i, samp in enumerate(final_sampled)
     ]
+
+    # create_corrected_structure(*arg_tuples[0])
+
     # Write in parallel
     with multiprocessing.Pool(threads) as pool:
         files_written = pool.starmap(create_corrected_structure, arg_tuples)

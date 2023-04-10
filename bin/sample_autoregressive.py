@@ -154,7 +154,7 @@ def main() -> None:
     # Write the sampled angles and resulting PDB files out
     for i, s in tqdm(enumerate(sampled_angles), desc="Writing sampled angles and PDB structures"):
         s.to_csv(sampled_angles_dir / f"generated_{i}.csv.gz")
-        fname = ac.create_new_chain_nerf(str(sampled_pdb_dir / f"generated_{i}.pdb"), s)
+        fname = ac.create_new_chain_nerf_to_file(str(sampled_pdb_dir / f"generated_{i}.pdb"), s)
         assert fname
 
 

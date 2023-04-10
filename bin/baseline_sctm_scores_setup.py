@@ -91,7 +91,7 @@ def main():
             dest_fname += ".pdb"
         
         # Write the reconstructed structure
-        f = ac.create_new_chain_nerf(dest_fname, coords)
+        f = ac.create_new_chain_nerf_to_file(dest_fname, coords)
         assert f
 
 

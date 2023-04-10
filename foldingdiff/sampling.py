@@ -415,8 +415,8 @@ def _score_angles(
         truth_path = Path(tmpdir) / "truth.pdb"
         reconst_path = Path(tmpdir) / "reconst.pdb"
 
-        truth_pdb = ac.create_new_chain_nerf(str(truth_path), truth_angles)
-        reconst_pdb = ac.create_new_chain_nerf(str(reconst_path), reconst_angles)
+        truth_pdb = ac.create_new_chain_nerf_to_file(str(truth_path), truth_angles)
+        reconst_pdb = ac.create_new_chain_nerf_to_file(str(reconst_path), reconst_angles)
 
         # Calculate WRT the truth angles
         score = tmalign.run_tmalign(reconst_pdb, truth_pdb)

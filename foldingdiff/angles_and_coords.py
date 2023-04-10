@@ -13,6 +13,7 @@ from typing import *
 import warnings
 
 import biotite
+import numpy
 import numpy as np
 import pandas as pd
 
@@ -181,24 +182,26 @@ def compute_coords(
     return coords
 
 
-def convert_angles_to_coords(
-        angles: pd.DataFrame,
-        atom_array: AtomArray,
-        replaced_info_mask: torch.Tensor
+def combine_original_with_predicted_structure(
+        original_atom_array: AtomArray,
+        replaced_info_mask: np.ndarray,
+        nerf_coords: np.ndarray
 ):
     """
     Convert the phi, psi, and omega angles of a protein into atomic coordinates.
 
     Parameters
     ----------
-    angles : pd.DataFrame
-        A DataFrame with columns 'phi', 'psi', 'omega', 'tau', 'CA:C:1N', 'C:1N:1CA',
-        where each row represents the angles of a residue.
-    atom_array : AtomArray
+    original_atom_array : AtomArray
         The original AtomArray from the PDB file, without the angle changes.
+
     replaced_info_mask : torch.Tensor
         A binary tensor of shape (n_residues,), where a 1 indicates that the corresponding
         residue has updated angles.
+
+    nerf_coords : np.ndarray
+        The coordinates of the NERF model, of shape (n_residues, 3, 3). The atoms are ordered
+        as N, CA, C.
 
     Returns
     -------
@@ -209,16 +212,18 @@ def convert_angles_to_coords(
     from biotite.structure import array as struc_array
 
     new_residues = []
-    for i, residue in enumerate(biotite.structure.residue_iter(atom_array)):
+    for i, residue in enumerate(biotite.structure.residue_iter(original_atom_array)):
 
-        if replaced_info_mask[0][i] == 0:
+        if replaced_info_mask[i] == 0:
             new_residues.append(residue)
             continue
 
-        phi, psi, omega, tau, CAC1N, C1N1CA = \
-            angles.iloc[i][['phi', 'psi', 'omega', 'tau', 'CA:C:1N', 'C:1N:1CA']]
-        # coords = compute_coords(phi, psi, omega)
-        coords = compute_coords_from_all(phi, psi, omega, tau, CAC1N, C1N1CA)
+        # Take the nerf coordinates
+        coords = {
+            'N': nerf_coords[3*i],
+            'CA': nerf_coords[3*i+1],
+            'C': nerf_coords[3*i+2],
+        }
 
         # Create new atom with the updated coordinates
         ca_atom = biotite.structure.Atom(
@@ -254,7 +259,7 @@ def convert_angles_to_coords(
             element='N',
         )
 
-        residue = [ca_atom, c_atom, n_atom]
+        residue = [n_atom, ca_atom, c_atom]
         new_residue = struc_array(residue)
         new_residues.append(new_residue)
 
@@ -274,27 +279,111 @@ def create_corrected_structure(
         initial_atom_array: AtomArray,
         replaced_info_mask: torch.Tensor,
 ) -> str:
-    new_atom_array = convert_angles_to_coords(
-        angles=angles,
-        atom_array=initial_atom_array,
-        replaced_info_mask=replaced_info_mask
+    # Convert the replaced info mask to a numpy array
+    replaced_info_mask = replaced_info_mask.cpu()[0].numpy().astype(bool)
+
+    # Extract the already_given_coords for the NERF model
+    already_given_coords = extract_backbone_from_struct(initial_atom_array, replaced_info_mask)
+
+    # Create nerf chain
+    nerf_coords = create_nerf_chain(
+        dists_and_angles=angles,
+        center_coords=False,
+        already_given_coords=already_given_coords,
+        to_generate_mask=replaced_info_mask,
     )
 
+    # Combine the old and new coordinates
+    new_atom_array = combine_original_with_predicted_structure(
+        original_atom_array=initial_atom_array,
+        replaced_info_mask=replaced_info_mask,
+        nerf_coords=nerf_coords,
+    )
+
+    # Write the new structure to a PDB file
     write_atom_array_to_pdb(new_atom_array, out_fname)
     return out_fname
 
 
-def create_new_chain_nerf(
-    out_fname: str,
-    dists_and_angles: pd.DataFrame,
-    angles_to_set: Optional[List[str]] = None,
-    dists_to_set: Optional[List[str]] = None,
-    center_coords: bool = True,
+def extract_backbone_from_struct(initial_atom_array, replaced_info_mask):
+    already_given_coords = []
+    for i, residue in enumerate(biotite.structure.residue_iter(initial_atom_array)):
+        if replaced_info_mask[i] == 0:
+            # extract the N, CA and C coordinates
+            n_coords = residue[residue.atom_name == 'N'][0].coord
+            ca_coords = residue[residue.atom_name == 'CA'][0].coord
+            c_coords = residue[residue.atom_name == 'C'][0].coord
+            already_given_coords.extend(np.array([n_coords, ca_coords, c_coords]))
+        else:
+            for i in range(3):
+                already_given_coords.append(np.zeros(shape=[3]))
+    already_given_coords = np.array(already_given_coords)
+
+    return already_given_coords
+
+
+def create_nerf_chain(
+        dists_and_angles: pd.DataFrame,
+        angles_to_set: Optional[List[str]] = None,
+        dists_to_set: Optional[List[str]] = None,
+        center_coords: bool = True,
+        already_given_coords: Optional[np.ndarray] = None,
+        to_generate_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    angles_to_set, dists_to_set = compute_default_angles_dist_set(angles_to_set, dists_and_angles, dists_to_set)
+
+    # Check that we are at least setting the dihedrals
+    required_dihedrals = ["phi", "psi", "omega"]
+    assert all([a in angles_to_set for a in required_dihedrals])
+
+    nerf_build_kwargs = compute_nerf_kwargs(
+        angles_to_set, dists_and_angles, dists_to_set, required_dihedrals,
+        already_given_coords, to_generate_mask
+    )
+
+    nerf_builder = nerf.NERFBuilder(**nerf_build_kwargs)
+    coords = (
+        nerf_builder.centered_cartesian_coords
+        if center_coords
+        else nerf_builder.cartesian_coords
+    )
+    return coords
+
+
+def create_new_chain_nerf_to_file(
+        out_fname: str,
+        dists_and_angles: pd.DataFrame,
+        angles_to_set: Optional[List[str]] = None,
+        dists_to_set: Optional[List[str]] = None,
+        center_coords: bool = True,
+        already_given_coords: Optional[np.ndarray] = None,
+        to_generate_mask: Optional[np.ndarray] = None,
 ) -> str:
     """
     Create a new chain using NERF to convert to cartesian coordinates. Returns
     the path to the newly create file if successful, empty string if fails.
     """
+    coords = create_nerf_chain(
+        dists_and_angles,
+        angles_to_set,
+        dists_to_set,
+        center_coords,
+        already_given_coords,
+        to_generate_mask,
+    )
+
+    if np.any(np.isnan(coords)):
+        logging.warning(f"Found NaN values, not writing pdb file {out_fname}")
+        return ""
+
+    assert coords.shape == (
+        int(dists_and_angles.shape[0] * 3),
+        3,
+    ), f"Unexpected shape: {coords.shape} for input of {len(dists_and_angles)}"
+    return write_coords_to_pdb(coords, out_fname)
+
+
+def compute_default_angles_dist_set(angles_to_set, dists_and_angles, dists_to_set):
     if angles_to_set is None and dists_to_set is None:
         angles_to_set, dists_to_set = [], []
         for c in dists_and_angles.columns:
@@ -309,10 +398,10 @@ def create_new_chain_nerf(
         assert angles_to_set is not None
         assert dists_to_set is not None
 
-    # Check that we are at least setting the dihedrals
-    required_dihedrals = ["phi", "psi", "omega"]
-    assert all([a in angles_to_set for a in required_dihedrals])
+    return angles_to_set, dists_to_set
 
+
+def compute_nerf_kwargs(angles_to_set, dists_and_angles, dists_to_set, required_dihedrals, already_given_coords=None, to_generate_mask=None):
     nerf_build_kwargs = dict(
         phi_dihedrals=dists_and_angles["phi"],
         psi_dihedrals=dists_and_angles["psi"],
@@ -330,7 +419,6 @@ def create_new_chain_nerf(
             nerf_build_kwargs["bond_angle_n_ca"] = dists_and_angles[a]
         else:
             raise ValueError(f"Unrecognized angle: {a}")
-
     for d in dists_to_set:
         assert d in dists_and_angles.columns
         if d == "0C:1N":
@@ -342,21 +430,12 @@ def create_new_chain_nerf(
         else:
             raise ValueError(f"Unrecognized distance: {d}")
 
-    nerf_builder = nerf.NERFBuilder(**nerf_build_kwargs)
-    coords = (
-        nerf_builder.centered_cartesian_coords
-        if center_coords
-        else nerf_builder.cartesian_coords
-    )
-    if np.any(np.isnan(coords)):
-        logging.warning(f"Found NaN values, not writing pdb file {out_fname}")
-        return ""
+    if already_given_coords is not None:
+        nerf_build_kwargs["already_given_coords"] = already_given_coords
+    if to_generate_mask is not None:
+        nerf_build_kwargs["to_generate_mask"] = to_generate_mask
 
-    assert coords.shape == (
-        int(dists_and_angles.shape[0] * 3),
-        3,
-    ), f"Unexpected shape: {coords.shape} for input of {len(dists_and_angles)}"
-    return write_coords_to_pdb(coords, out_fname)
+    return nerf_build_kwargs
 
 
 def write_atom_array_to_pdb(atom_array: AtomArray, out_fname: str) -> str:

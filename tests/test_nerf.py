@@ -79,7 +79,7 @@ class TestBackboneReconstruction(unittest.TestCase):
             )
             with tempfile.TemporaryDirectory() as dirname:
                 out_fname = os.path.join(dirname, "temp.pdb")
-                ac.create_new_chain_nerf(
+                ac.create_new_chain_nerf_to_file(
                     out_fname,
                     angles,
                     angles_to_set=self.exhaustive_angles,
@@ -99,7 +99,7 @@ class TestBackboneReconstruction(unittest.TestCase):
             )
             with tempfile.TemporaryDirectory() as dirname:
                 out_fname = os.path.join(dirname, "temp.pdb")
-                ac.create_new_chain_nerf(
+                ac.create_new_chain_nerf_to_file(
                     out_fname,
                     angles,
                     angles_to_set=self.exhaustive_angles,
@@ -119,7 +119,7 @@ class TestBackboneReconstruction(unittest.TestCase):
             )
             with tempfile.TemporaryDirectory() as dirname:
                 out_fname = os.path.join(dirname, "temp.pdb")
-                ac.create_new_chain_nerf(
+                ac.create_new_chain_nerf_to_file(
                     out_fname,
                     angles,
                     angles_to_set=self.minimal_angles,

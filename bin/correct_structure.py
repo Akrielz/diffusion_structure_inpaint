@@ -31,7 +31,8 @@ from foldingdiff import modelling
 from foldingdiff import sampling
 from foldingdiff import plotting
 from foldingdiff.datasets import AnglesEmptyDataset, NoisedAnglesDataset, CathCanonicalAnglesOnlyDataset
-from foldingdiff.angles_and_coords import create_new_chain_nerf, convert_angles_to_coords
+from foldingdiff.angles_and_coords import create_new_chain_nerf_to_file, \
+    canonical_distances_and_dihedrals, EXHAUSTIVE_ANGLES
 from foldingdiff import utils
 
 
@@ -97,14 +98,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def read_to_correct_structure(pdb_file: str) -> Dict[str, torch.Tensor]:
+def read_to_correct_structure(pdb_file: str, pad_len=128) -> Dict[str, torch.Tensor]:
     clean_dset = CathCanonicalAnglesOnlyDataset(
-        pad=128,
-        trim_strategy='randomcrop',
+        pad=pad_len,
+        trim_strategy='',
         fnames=[pdb_file],
         use_cache=True,
     )
-    dl = DataLoader(clean_dset, batch_size=32, shuffle=False)
+    noised_dset = NoisedAnglesDataset(
+        clean_dset,
+        timesteps=1000,
+        beta_schedule='cosine'
+    )
+    dl = DataLoader(noised_dset, batch_size=32, shuffle=False)
     features = iter(dl).next()
 
     return features
@@ -114,6 +120,38 @@ def get_real_len_of_structure(features: Dict[str, torch.Tensor]) -> int:
     attn_mask = features['attn_mask']
     real_len = torch.where(attn_mask == 1)[1].max().item() + 1
     return real_len
+
+
+def compute_angles_from_pdb(pdb_file: str):
+    df = canonical_distances_and_dihedrals(pdb_file, angles=EXHAUSTIVE_ANGLES)
+    return df
+
+
+def overwrite_the_angles(
+        to_correct_features: Dict[str, torch.Tensor],
+        pdb_file: str,
+        pad_len: int = 128
+):
+    # Read the angles
+    angles = compute_angles_from_pdb(pdb_file)
+    angles = angles.to_numpy()
+    angles = torch.from_numpy(angles)
+    angles = angles.unsqueeze(0)
+
+    # Pad the angles
+    len_to_pad = pad_len - angles.shape[1]
+    angles = torch.cat(
+        [angles, torch.zeros([1, len_to_pad, 6])], dim=1
+    )
+
+    # cast to float
+    angles = angles.float()
+
+    # Replaces nans with 0
+    angles = torch.where(torch.isnan(angles), torch.zeros_like(angles), angles)
+
+    to_correct_features["angles"] = angles
+    return to_correct_features
 
 
 def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> torch.Tensor:
@@ -129,7 +167,7 @@ def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> 
     mask = torch.zeros_like(attn_mask)
     mask[:, masked_positions[random_pos]] = 1
 
-    mask = torch.zeros((1, 128))
+    # mask = torch.zeros((1, 128))
     return mask
 
 
@@ -190,6 +228,7 @@ def main():
 
     # Load the structure to correct
     to_correct_features = read_to_correct_structure(args.pdb_to_correct)
+    to_correct_features = overwrite_the_angles(to_correct_features, args.pdb_to_correct)
     to_correct_mask = mock_missing_info_mask(to_correct_features, num_missing=4)
     to_correct_real_len = get_real_len_of_structure(to_correct_features)
 
@@ -227,12 +266,10 @@ def main():
     # read the atom_array of the structure to correct
     to_correct_atom_array = read_pdb_file(args.pdb_to_correct)
 
-    convert_angles_to_coords(sampled_dfs[0], to_correct_atom_array, to_correct_mask)
-
     # Write the sampled angles as pdb files
-    to_correct_mask = torch.ones([1, 128])
-    # pdb_files = write_corrected_structures(sampled_dfs, outdir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
-    pdb_files = write_preds_pdb_folder(sampled_dfs, outdir / "sampled_pdb")
+    # to_correct_mask = torch.zeros([1, 128])
+    pdb_files = write_corrected_structures(sampled_dfs, outdir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
+    # pdb_files = write_preds_pdb_folder(sampled_dfs, outdir / "sampled_pdb")
 
     # # If full history is specified, create a separate directory and write those files
     # if args.fullhistory:
