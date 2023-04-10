@@ -17,8 +17,8 @@ def read_pdb_file(fname: str):
 
 
 def main():
-    # fname = "pdb_to_correct/2ZJR_W.pdb"
-    fname = "pdb_corrected/sampled_pdb/generated_0.pdb"
+    fname = "pdb_to_correct/2ZJR_W.pdb"
+    # fname = "pdb_corrected/sampled_pdb/generated_1.pdb"
     # fname = "pdb_to_correct/2ZJR_W.pdb"
     # fname = "/home/alexandru/code/foldingdiff/data/cath/dompdb/2pfuA01"
     # fname = "generated_data_now_1/sampled_pdb/generated_0.pdb"
@@ -41,8 +41,8 @@ def main():
 
     color_map = {
         0: 'black',
-        4: 'red',
-        8: 'green',
+        16: 'red',
+        20: 'green',
     }
 
     # Set the axes for xyz between -15 and 15
@@ -59,6 +59,11 @@ def main():
         ax.plot([coords[i][0], coords[i+1][0]], [coords[i][1], coords[i+1][1]], [coords[i][2], coords[i+1][2]], color=color)
 
     plt.show()
+
+    # make the plot interactive
+    plt.ion()
+    plt.show()
+    input("Press Enter to continue...")
 
 
 if __name__ == "__main__":

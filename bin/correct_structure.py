@@ -161,7 +161,7 @@ def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> 
     num_masked = len(masked_positions)
 
     # random_pos = torch.randperm(num_masked)[:num_missing]
-    random_pos = torch.tensor([4, 5, 6, 7])
+    random_pos = torch.tensor([i for i in range(4, 8)])
 
     # create mask
     mask = torch.zeros_like(attn_mask)
@@ -271,101 +271,101 @@ def main():
     pdb_files = write_corrected_structures(sampled_dfs, outdir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
     # pdb_files = write_preds_pdb_folder(sampled_dfs, outdir / "sampled_pdb")
 
-    # # If full history is specified, create a separate directory and write those files
-    # if args.fullhistory:
-    #     # Write the angles
-    #     full_history_angles_dir = sampled_angles_folder / "sample_history"
-    #     os.makedirs(full_history_angles_dir)
-    #     full_history_pdb_dir = outdir / "sampled_pdb/sample_history"
-    #     os.makedirs(full_history_pdb_dir)
-    #     # sampled is a list of np arrays
-    #     for i, sampled_series in enumerate(sampled):
-    #         snapshot_dfs = [
-    #             pd.DataFrame(snapshot, columns=train_dset.feature_names["angles"])
-    #             for snapshot in sampled_series
-    #         ]
-    #         # Write the angles
-    #         ith_angle_dir = full_history_angles_dir / f"generated_{i}"
-    #         os.makedirs(ith_angle_dir, exist_ok=True)
-    #         for timestep, snapshot_df in enumerate(snapshot_dfs):
-    #             snapshot_df.to_csv(
-    #                 ith_angle_dir / f"generated_{i}_timestep_{timestep}.csv.gz"
-    #             )
-    #         # Write the pdb files
-    #         ith_pdb_dir = full_history_pdb_dir / f"generated_{i}"
-    #         write_preds_pdb_folder(
-    #             snapshot_dfs, ith_pdb_dir, basename_prefix=f"generated_{i}_timestep_"
-    #         )
-    #
-    # # Generate histograms of sampled angles -- separate plots, and a combined plot
-    # # For calculating angle distributions
-    # multi_fig, multi_axes = plt.subplots(
-    #     dpi=300, nrows=2, ncols=3, figsize=(14, 6), sharex=True
-    # )
-    # step_multi_fig, step_multi_axes = plt.subplots(
-    #     dpi=300, nrows=2, ncols=3, figsize=(14, 6), sharex=True
-    # )
-    # final_sampled_stacked = np.vstack(final_sampled)
-    # for i, ft_name in enumerate(test_dset.feature_names["angles"]):
-    #     orig_values = (
-    #         test_values_stacked[:, i] if test_values_stacked is not None else None
-    #     )
-    #     samp_values = final_sampled_stacked[:, i]
-    #
-    #     ft_name_readable = FT_NAME_MAP[ft_name]
-    #
-    #     # Plot single plots
-    #     plot_distribution_overlap(
-    #         {"Test": orig_values, "Sampled": samp_values},
-    #         title=f"Sampled angle distribution - {ft_name_readable}",
-    #         fname=plotdir / f"dist_{ft_name}.pdf",
-    #     )
-    #     plot_distribution_overlap(
-    #         {"Test": orig_values, "Sampled": samp_values},
-    #         title=f"Sampled angle CDF - {ft_name_readable}",
-    #         histtype="step",
-    #         cumulative=True,
-    #         fname=plotdir / f"cdf_{ft_name}.pdf",
-    #     )
-    #
-    #     # Plot combo plots
-    #     plot_distribution_overlap(
-    #         {"Test": orig_values, "Sampled": samp_values},
-    #         title=f"Sampled angle distribution - {ft_name_readable}",
-    #         ax=multi_axes.flatten()[i],
-    #         show_legend=i == 0,
-    #     )
-    #     plot_distribution_overlap(
-    #         {"Test": orig_values, "Sampled": samp_values},
-    #         title=f"Sampled angle CDF - {ft_name_readable}",
-    #         cumulative=True,
-    #         histtype="step",
-    #         ax=step_multi_axes.flatten()[i],
-    #         show_legend=i == 0,
-    #     )
-    # multi_fig.savefig(plotdir / "dist_combined.pdf", bbox_inches="tight")
-    # step_multi_fig.savefig(plotdir / "cdf_combined.pdf", bbox_inches="tight")
-    #
-    # # Generate ramachandran plot for sampled angles
-    # plot_ramachandran(
-    #     final_sampled_stacked[:, phi_idx],
-    #     final_sampled_stacked[:, psi_idx],
-    #     fname=plotdir / "ramachandran_generated.pdf",
-    # )
-    #
-    # # Generate plots of secondary structure co-occurrence
-    # make_ss_cooccurrence_plot(
-    #     pdb_files,
-    #     str(outdir / "plots" / "ss_cooccurrence_sampled.pdf"),
-    #     threads=multiprocessing.cpu_count(),
-    # )
-    # if args.testcomparison:
-    #     make_ss_cooccurrence_plot(
-    #         test_dset.filenames,
-    #         str(outdir / "plots" / "ss_cooccurrence_test.pdf"),
-    #         max_seq_len=test_dset.dset.pad,
-    #         threads=multiprocessing.cpu_count(),
-    #     )
+    # If full history is specified, create a separate directory and write those files
+    if args.fullhistory:
+        # Write the angles
+        full_history_angles_dir = sampled_angles_folder / "sample_history"
+        os.makedirs(full_history_angles_dir)
+        full_history_pdb_dir = outdir / "sampled_pdb/sample_history"
+        os.makedirs(full_history_pdb_dir)
+        # sampled is a list of np arrays
+        for i, sampled_series in enumerate(sampled):
+            snapshot_dfs = [
+                pd.DataFrame(snapshot, columns=train_dset.feature_names["angles"])
+                for snapshot in sampled_series
+            ]
+            # Write the angles
+            ith_angle_dir = full_history_angles_dir / f"generated_{i}"
+            os.makedirs(ith_angle_dir, exist_ok=True)
+            for timestep, snapshot_df in enumerate(snapshot_dfs):
+                snapshot_df.to_csv(
+                    ith_angle_dir / f"generated_{i}_timestep_{timestep}.csv.gz"
+                )
+            # Write the pdb files
+            ith_pdb_dir = full_history_pdb_dir / f"generated_{i}"
+            write_preds_pdb_folder(
+                snapshot_dfs, ith_pdb_dir, basename_prefix=f"generated_{i}_timestep_"
+            )
+
+    # Generate histograms of sampled angles -- separate plots, and a combined plot
+    # For calculating angle distributions
+    multi_fig, multi_axes = plt.subplots(
+        dpi=300, nrows=2, ncols=3, figsize=(14, 6), sharex=True
+    )
+    step_multi_fig, step_multi_axes = plt.subplots(
+        dpi=300, nrows=2, ncols=3, figsize=(14, 6), sharex=True
+    )
+    final_sampled_stacked = np.vstack(final_sampled)
+    for i, ft_name in enumerate(test_dset.feature_names["angles"]):
+        orig_values = (
+            test_values_stacked[:, i] if test_values_stacked is not None else None
+        )
+        samp_values = final_sampled_stacked[:, i]
+
+        ft_name_readable = FT_NAME_MAP[ft_name]
+
+        # Plot single plots
+        plot_distribution_overlap(
+            {"Test": orig_values, "Sampled": samp_values},
+            title=f"Sampled angle distribution - {ft_name_readable}",
+            fname=plotdir / f"dist_{ft_name}.pdf",
+        )
+        plot_distribution_overlap(
+            {"Test": orig_values, "Sampled": samp_values},
+            title=f"Sampled angle CDF - {ft_name_readable}",
+            histtype="step",
+            cumulative=True,
+            fname=plotdir / f"cdf_{ft_name}.pdf",
+        )
+
+        # Plot combo plots
+        plot_distribution_overlap(
+            {"Test": orig_values, "Sampled": samp_values},
+            title=f"Sampled angle distribution - {ft_name_readable}",
+            ax=multi_axes.flatten()[i],
+            show_legend=i == 0,
+        )
+        plot_distribution_overlap(
+            {"Test": orig_values, "Sampled": samp_values},
+            title=f"Sampled angle CDF - {ft_name_readable}",
+            cumulative=True,
+            histtype="step",
+            ax=step_multi_axes.flatten()[i],
+            show_legend=i == 0,
+        )
+    multi_fig.savefig(plotdir / "dist_combined.pdf", bbox_inches="tight")
+    step_multi_fig.savefig(plotdir / "cdf_combined.pdf", bbox_inches="tight")
+
+    # Generate ramachandran plot for sampled angles
+    plot_ramachandran(
+        final_sampled_stacked[:, phi_idx],
+        final_sampled_stacked[:, psi_idx],
+        fname=plotdir / "ramachandran_generated.pdf",
+    )
+
+    # Generate plots of secondary structure co-occurrence
+    make_ss_cooccurrence_plot(
+        pdb_files,
+        str(outdir / "plots" / "ss_cooccurrence_sampled.pdf"),
+        threads=multiprocessing.cpu_count(),
+    )
+    if args.testcomparison:
+        make_ss_cooccurrence_plot(
+            test_dset.filenames,
+            str(outdir / "plots" / "ss_cooccurrence_test.pdf"),
+            max_seq_len=test_dset.dset.pad,
+            threads=multiprocessing.cpu_count(),
+        )
 
 
 if __name__ == '__main__':

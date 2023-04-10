@@ -159,8 +159,6 @@ def write_corrected_structures(
     return files_written
 
 
-
-
 def plot_ramachandran(
     phi_values,
     psi_values,

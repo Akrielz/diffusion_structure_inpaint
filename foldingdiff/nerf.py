@@ -50,6 +50,36 @@ class NERFBuilder:
 
         # If already given coords are given, recompute
         # bond_len_n_ca, bond_angle_ca_c, bond_angle_c_n
+        if already_given_coords is not None and to_generate_mask is not None:
+            # On pos 0, 3, 6... i*3 we have N
+            # On pos 1, 4, 7... i*3+1 we have CA
+            # On pos 2, 5, 8... i*3+2 we have C
+            # We need to compute the bond lengths and angles for the next N, CA, C
+            # but only where the mask is False
+
+            n_coords = already_given_coords[::3]
+            ca_coords = already_given_coords[1::3]
+            c_coords = already_given_coords[2::3]
+
+            # get mask for the true len
+            residue_mask = 1 - to_generate_mask[:len(n_coords)]
+            residue_mask = residue_mask.astype(bool)
+
+            # Apply mask
+            n_coords = n_coords[residue_mask]
+            ca_coords = ca_coords[residue_mask]
+            c_coords = c_coords[residue_mask]
+
+            # compute bond lengths
+            bond_len_n_ca = np.linalg.norm(n_coords - ca_coords, axis=1)
+            bond_len_ca_c = np.linalg.norm(ca_coords - c_coords, axis=1)
+            bond_len_c_n = np.linalg.norm(c_coords[:-1] - n_coords[1:], axis=1)
+
+            # get the median
+            bond_len_n_ca = np.median(bond_len_n_ca)
+            bond_len_ca_c = np.median(bond_len_ca_c)
+            bond_len_c_n = np.median(bond_len_c_n)
+            pass
 
         self.use_torch = False
         if any(
