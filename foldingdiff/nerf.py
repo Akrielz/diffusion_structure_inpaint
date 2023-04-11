@@ -79,7 +79,6 @@ class NERFBuilder:
             bond_len_n_ca = np.median(bond_len_n_ca)
             bond_len_ca_c = np.median(bond_len_ca_c)
             bond_len_c_n = np.median(bond_len_c_n)
-            pass
 
         self.use_torch = False
         if any(

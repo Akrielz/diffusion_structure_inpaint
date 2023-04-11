@@ -130,6 +130,7 @@ def compute_angles_from_pdb(pdb_file: str):
 def overwrite_the_angles(
         to_correct_features: Dict[str, torch.Tensor],
         pdb_file: str,
+        train_dset,
         pad_len: int = 128
 ):
     # Read the angles
@@ -137,6 +138,12 @@ def overwrite_the_angles(
     angles = angles.to_numpy()
     angles = torch.from_numpy(angles)
     angles = angles.unsqueeze(0)
+
+    # Shift things towards min:
+    angles = angles - train_dset.dset.get_masked_means()
+    angles = utils.modulo_with_wrapped_range(
+        angles, range_min=-np.pi, range_max=np.pi
+    )
 
     # Pad the angles
     len_to_pad = pad_len - angles.shape[1]
@@ -161,7 +168,7 @@ def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> 
     num_masked = len(masked_positions)
 
     # random_pos = torch.randperm(num_masked)[:num_missing]
-    random_pos = torch.tensor([i for i in range(4, 8)])
+    random_pos = torch.tensor([i for i in range(4, 16)])
 
     # create mask
     mask = torch.zeros_like(attn_mask)
@@ -228,7 +235,7 @@ def main():
 
     # Load the structure to correct
     to_correct_features = read_to_correct_structure(args.pdb_to_correct)
-    to_correct_features = overwrite_the_angles(to_correct_features, args.pdb_to_correct)
+    to_correct_features = overwrite_the_angles(to_correct_features, args.pdb_to_correct, train_dset)
     to_correct_mask = mock_missing_info_mask(to_correct_features, num_missing=4)
     to_correct_real_len = get_real_len_of_structure(to_correct_features)
 
@@ -267,7 +274,6 @@ def main():
     to_correct_atom_array = read_pdb_file(args.pdb_to_correct)
 
     # Write the sampled angles as pdb files
-    # to_correct_mask = torch.zeros([1, 128])
     pdb_files = write_corrected_structures(sampled_dfs, outdir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
     # pdb_files = write_preds_pdb_folder(sampled_dfs, outdir / "sampled_pdb")
 

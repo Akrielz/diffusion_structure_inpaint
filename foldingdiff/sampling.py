@@ -59,11 +59,9 @@ def p_sample(
 
     # Equation 11 in the paper
     # Use our model (noise predictor) to predict the mean
+    model_result = model(x, t, attention_mask=attn_mask)
     model_mean = sqrt_recip_alphas_t * (
-        x
-        - betas_t
-        * model(x, t, attention_mask=attn_mask)
-        / sqrt_one_minus_alphas_cumprod_t
+        x - betas_t * model_result / sqrt_one_minus_alphas_cumprod_t
     )
 
     if t_index == 0:
@@ -230,7 +228,7 @@ def sample_missing_structure(
     # Compute lengths for each sample
     lengths = [original_length] * n
     lengths_chunkified = [
-        lengths[i : i + batch_size] for i in range(0, len(lengths), batch_size)
+        lengths[i: i + batch_size] for i in range(0, len(lengths), batch_size)
     ]
 
     # Get original angles
@@ -272,10 +270,10 @@ def sample_missing_structure(
         logging.info(
             f"Shifting predicted values by original offset: {train_dset.dset.get_masked_means()}"
         )
-        retval = [s + train_dset.dset.get_masked_means() for s in return_values]
+        return_values = [s + train_dset.dset.get_masked_means() for s in return_values]
         # Because shifting may have caused us to go across the circle boundary, re-wrap
         angular_idx = np.where(train_dset.feature_is_angular[feature_key])[0]
-        for s in retval:
+        for s in return_values:
             s[..., angular_idx] = utils.modulo_with_wrapped_range(
                 s[..., angular_idx], range_min=-np.pi, range_max=np.pi
             )
