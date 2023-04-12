@@ -96,7 +96,7 @@ def p_sample_loop_missing_info(
     b = noise_list[0].shape[0]
 
     # Compute the mask for the missing info
-    not_missing_info_mask = 1 - missing_info_mask
+    not_missing_info_mask = 1 - missing_info_mask.long()
     not_missing_info_mask = not_missing_info_mask.to(torch.bool)
     not_missing_info_mask = not_missing_info_mask.to(device)
     not_missing_info_mask = not_missing_info_mask.repeat(b, 1)
@@ -153,7 +153,7 @@ def p_sample_loop_missing_info(
 
         imgs.append(img.cpu())
 
-    imgs[-1][not_missing_info_mask] = original_angles.repeat(b, 1, 1).cpu()[not_missing_info_mask]
+    imgs[-1][not_missing_info_mask] = original_angles.cpu()[not_missing_info_mask]
     return torch.stack(imgs)
 
 
@@ -224,48 +224,77 @@ def sample_missing_structure(
         batch_size: int = 512,
         feature_key: str = "angles",
         disable_pbar: bool = False,
+        window_step: int = 32,
+        window_size: int = 128,
+        whole_pad_len: int = 128,
 ):
-    # Compute lengths for each sample
-    lengths = [original_length] * n
-    lengths_chunkified = [
-        lengths[i: i + batch_size] for i in range(0, len(lengths), batch_size)
-    ]
+    # Convert missing info mask to bool tensor
+    missing_info_mask = missing_info_mask.to(torch.bool)
 
     # Get original angles
-    original_angles = original_features["angles"]
+    original_angles: torch.Tensor = original_features["angles"]
+    infilled_angles = original_angles.clone().repeat(n, 1, 1)
 
-    logging.info(f"Sampling {len(lengths)} items in batches of size {batch_size}")
-    return_values = []
-    for this_lengths in lengths_chunkified:
-        batch = len(this_lengths)
+    # Compute the left index of the window
+    left_indexes = torch.arange(0, whole_pad_len - window_size + 1, window_step)
 
-        # repeat the original angles batch times
-        original_angles_batch = original_angles.repeat(batch, 1, 1)
+    for left in left_indexes:
+        right = left + window_size
+        cropped_attn_mask = original_features['attn_mask'][:, left:right]
+        cropped_missing_info_mask = missing_info_mask[:, left:right]
 
-        noise_list = train_dset.sample_full_list_of_noise(original_angles_batch)
+        if cropped_missing_info_mask.sum() == 0:
+            continue
 
-        sampled_angles = p_sample_loop_missing_info(
-            model=model,
-            lengths=this_lengths,
-            noise_list=noise_list,
-            timesteps=train_dset.timesteps,
-            betas=train_dset.alpha_beta_terms["betas"],
-            is_angle=train_dset.feature_is_angular[feature_key],
-            disable_pbar=disable_pbar,
-            original_angles=original_angles,
-            missing_info_mask=missing_info_mask
-        )
+        cropped_angles = infilled_angles[:, left:right]
+        cropped_real_len = cropped_attn_mask.sum()
 
-        # Gets to size (timesteps, seq_len, n_ft)
-        trimmed_sampled = [
-            sampled_angles[:, i, :l, :].numpy() for i, l in enumerate(this_lengths)
+        # Compute lengths for each sample
+        lengths = [cropped_real_len.long().item()] * n
+        lengths_batches = [
+            lengths[i: i + batch_size] for i in range(0, len(lengths), batch_size)
         ]
-        return_values.extend(trimmed_sampled)
 
+        cropped_angles_batches = [
+            cropped_angles[i: i + batch_size] for i in range(0, len(cropped_angles), batch_size)
+        ]
+
+        chunk_values = []
+        for cropped_angles_batch, lengths_batch in zip(cropped_angles_batches, lengths_batches):
+            noise_list = train_dset.sample_full_list_of_noise(cropped_angles_batch)
+
+            sampled_angles = p_sample_loop_missing_info(
+                model=model,
+                lengths=lengths_batch,
+                noise_list=noise_list,
+                timesteps=train_dset.timesteps,
+                betas=train_dset.alpha_beta_terms["betas"],
+                is_angle=train_dset.feature_is_angular[feature_key],
+                disable_pbar=disable_pbar,
+                original_angles=cropped_angles_batch,
+                missing_info_mask=cropped_missing_info_mask
+            )
+            chunk_values.extend(sampled_angles[-1])
+
+        # Get all the sampled angles together and replace info in infilled_angles
+        sampled_angles_chunk = torch.stack(chunk_values)
+        infilled_angles[:, left:right] = sampled_angles_chunk
+
+    # Trim the infilled angles to the original length
+    trimmed_sampled = [
+        infilled_angles[i, :original_length, :].numpy() for i in range(n)
+    ]
+
+    return_values = mean_shift(feature_key, trimmed_sampled, train_dset)
+
+    return return_values
+
+
+def mean_shift(feature_key, return_values, train_dset):
     if (
-        hasattr(train_dset, "dset")
-        and hasattr(train_dset.dset, "get_masked_means")
-        and train_dset.dset.get_masked_means() is not None
+            hasattr(train_dset, "dset")
+            and hasattr(train_dset.dset, "get_masked_means")
+            and train_dset.dset.get_masked_means() is not None
     ):
         logging.info(
             f"Shifting predicted values by original offset: {train_dset.dset.get_masked_means()}"
@@ -277,7 +306,6 @@ def sample_missing_structure(
             s[..., angular_idx] = utils.modulo_with_wrapped_range(
                 s[..., angular_idx], range_min=-np.pi, range_max=np.pi
             )
-
     return return_values
 
 

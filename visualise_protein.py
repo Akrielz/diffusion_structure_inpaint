@@ -25,6 +25,7 @@ def main():
 
     # fname = "pdb_to_correct/generated_0.pdb"
     fname = "pdb_corrected/sampled_pdb/generated_3.pdb"
+    # fname = "pdb_to_correct/generated_0_long.pdb"
 
     source_struct = read_pdb_file(fname)
     # filter just the CA
@@ -49,10 +50,10 @@ def main():
         16: 'green',
     }
 
-    limit = 50
-    ax.set_xlim(-limit, limit)
-    ax.set_ylim(-limit, limit)
-    ax.set_zlim(-limit, limit)
+    # limit = 50
+    # ax.set_xlim(-limit, limit)
+    # ax.set_ylim(-limit, limit)
+    # ax.set_zlim(-limit, limit)
 
     color = "black"
     for i in range(len(coords) - 1):

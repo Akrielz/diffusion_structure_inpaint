@@ -1,42 +1,31 @@
 import gzip
-import multiprocessing
-import os, sys
+import os
 import argparse
 import logging
-import json
 import shutil
 from pathlib import Path
 from typing import *
 
 import numpy as np
 import pandas as pd
-import mpl_scatter_density
+from biotite.structure import AtomArray
 from biotite.structure.io.pdb import PDBFile
-from matplotlib import pyplot as plt
-from astropy.visualization import LogStretch
-from astropy.visualization.mpl_normalize import ImageNormalize
 
 import torch
 from huggingface_hub import snapshot_download
-from pandas import DataFrame
 from torch.utils.data import DataLoader
 
-from bin.sample import build_datasets, plot_ramachandran, SEED, write_preds_pdb_folder, FT_NAME_MAP, \
-    plot_distribution_overlap, write_corrected_structures
-# Import data loading code from main training script
-from train import get_train_valid_test_sets
-from annot_secondary_structures import make_ss_cooccurrence_plot
+from bin.sample import build_datasets, plot_ramachandran, SEED, \
+    write_corrected_structures, generate_raports
 
 from foldingdiff import modelling
 from foldingdiff import sampling
-from foldingdiff import plotting
-from foldingdiff.datasets import AnglesEmptyDataset, NoisedAnglesDataset, CathCanonicalAnglesOnlyDataset
-from foldingdiff.angles_and_coords import create_new_chain_nerf_to_file, \
-    canonical_distances_and_dihedrals, EXHAUSTIVE_ANGLES
+from foldingdiff.datasets import NoisedAnglesDataset, CathCanonicalAnglesOnlyDataset
+from foldingdiff.angles_and_coords import canonical_distances_and_dihedrals, EXHAUSTIVE_ANGLES
 from foldingdiff import utils
 
 
-def read_pdb_file(fname: str):
+def read_pdb_file(fname: str) -> Optional[AtomArray]:
     opener = gzip.open if fname.endswith(".gz") else open
     with opener(str(fname), "rt") as f:
         source = PDBFile.read(f)
@@ -85,15 +74,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Store full history, not just final structure",
     )
     parser.add_argument(
-        "--testcomparison", action="store_true", help="Run comparison against test set"
+        "--testcomparison",
+        action="store_true",
+        help="Run comparison against test set"
     )
-    parser.add_argument("--seed", type=int, default=SEED, help="Random seed")
-    parser.add_argument("--device", type=str, default="cuda:0", help="Device to use")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=SEED,
+        help="Random seed"
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda:0",
+        help="Device to use"
+    )
     parser.add_argument(
         "--pdb_to_correct",
         type=str,
         default="",
         help="Path to PDB file to correct",
+    )
+    parser.add_argument(
+        "--window_size",
+        type=int,
+        default=128,
+        help="Minimum padding length that is needed"
+    )
+    parser.add_argument(
+        "--window_step",
+        type=int,
+        default=32,
+        help="Step size for the sliding window when correcting the structure",
     )
     return parser
 
@@ -116,10 +129,22 @@ def read_to_correct_structure(pdb_file: str, pad_len=128) -> Dict[str, torch.Ten
     return features
 
 
-def get_real_len_of_structure(features: Dict[str, torch.Tensor]) -> int:
-    attn_mask = features['attn_mask']
-    real_len = torch.where(attn_mask == 1)[1].max().item() + 1
-    return real_len
+def get_real_len_of_structure(
+        features: Union[Dict[str, torch.Tensor], str]
+) -> int:
+    # check if features is a Dict
+    if isinstance(features, dict):
+        attn_mask = features['attn_mask']
+        real_len = torch.where(attn_mask == 1)[1].max().item() + 1
+        return real_len
+
+    # check if features is a str
+    if isinstance(features, str):
+        structure = read_pdb_file(features)
+        real_len = len(structure[structure.atom_name == "CA"])
+        return real_len
+
+    raise ValueError("features should be either a Dict or a str")
 
 
 def compute_angles_from_pdb(pdb_file: str):
@@ -178,6 +203,16 @@ def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> 
     return mask
 
 
+def compute_pad_len(real_len, window_size, window_step):
+    # We must have the pad len at least the window_size due to the model
+    pad_len = max(window_size, real_len)
+
+    # We must have the pad len divisible by the window_step
+    pad_len = pad_len + (window_step - pad_len % window_step)
+
+    return pad_len
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -187,21 +222,13 @@ def main():
     logging.info(f"Creating {args.outdir}")
     os.makedirs(args.outdir, exist_ok=True)
     outdir = Path(args.outdir)
-    # Be extra cautious so we don't overwrite any results
 
     if os.listdir(outdir):
-        # remove the directory and all its contents
         shutil.rmtree(outdir)
-        # recreate the directory
         os.makedirs(outdir, exist_ok=True)
 
     # Download the model if it was given on modelhub
-    if utils.is_huggingface_hub_id(args.model):
-        logging.info(f"Detected huggingface repo ID {args.model}")
-        dl_path = snapshot_download(args.model)  # Caching is automatic
-        assert os.path.isdir(dl_path)
-        logging.info(f"Using downloaded model at {dl_path}")
-        args.model = dl_path
+    download_model(args)
 
     plotdir = outdir / "plots"
     os.makedirs(plotdir, exist_ok=True)
@@ -215,29 +242,16 @@ def main():
     # Fetch values for training distribution
     select_by_attn = lambda x: x["angles"][x["attn_mask"] != 0]
 
-    if args.testcomparison:
-        test_values = [
-            select_by_attn(test_dset.dset.__getitem__(i, ignore_zero_center=True))
-            for i in range(len(test_dset))
-        ]
-        test_values_stacked = torch.cat(test_values, dim=0).cpu().numpy()
-
-        # Plot ramachandran plot for the training distribution
-        # Default figure size is 6.4x4.8 inches
-        plot_ramachandran(
-            test_values_stacked[:, phi_idx],
-            test_values_stacked[:, psi_idx],
-            annot_ss=True,
-            fname=plotdir / "ramachandran_test_annot.pdf",
-        )
-    else:
-        test_values_stacked = None
+    test_values_stacked = compute_ramachandran_plot(
+        args, phi_idx, plotdir, psi_idx, select_by_attn, test_dset
+    )
 
     # Load the structure to correct
-    to_correct_features = read_to_correct_structure(args.pdb_to_correct)
-    to_correct_features = overwrite_the_angles(to_correct_features, args.pdb_to_correct, train_dset)
+    to_correct_real_len = get_real_len_of_structure(args.pdb_to_correct)
+    pad_len = compute_pad_len(to_correct_real_len, args.window_size, args.window_step)
+    to_correct_features = read_to_correct_structure(args.pdb_to_correct, pad_len)
+    to_correct_features = overwrite_the_angles(to_correct_features, args.pdb_to_correct, train_dset, pad_len)
     to_correct_mask = mock_missing_info_mask(to_correct_features, num_missing=4)
-    to_correct_real_len = get_real_len_of_structure(to_correct_features)
 
     # Load the model
     model_snapshot_dir = outdir / "model_snapshot"
@@ -255,9 +269,12 @@ def main():
         to_correct_features,
         n=args.num,
         batch_size=args.batchsize,
+        window_step=args.window_step,
+        window_size=args.window_size,
+        whole_pad_len=pad_len,
     )
 
-    final_sampled = [s[-1] for s in sampled]
+    final_sampled = [s for s in sampled]
     sampled_dfs = [
         pd.DataFrame(s, columns=train_dset.feature_names["angles"])
         for s in final_sampled
@@ -275,103 +292,39 @@ def main():
 
     # Write the sampled angles as pdb files
     pdb_files = write_corrected_structures(sampled_dfs, outdir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
-    # pdb_files = write_preds_pdb_folder(sampled_dfs, outdir / "sampled_pdb")
 
-    # If full history is specified, create a separate directory and write those files
-    if args.fullhistory:
-        # Write the angles
-        full_history_angles_dir = sampled_angles_folder / "sample_history"
-        os.makedirs(full_history_angles_dir)
-        full_history_pdb_dir = outdir / "sampled_pdb/sample_history"
-        os.makedirs(full_history_pdb_dir)
-        # sampled is a list of np arrays
-        for i, sampled_series in enumerate(sampled):
-            snapshot_dfs = [
-                pd.DataFrame(snapshot, columns=train_dset.feature_names["angles"])
-                for snapshot in sampled_series
-            ]
-            # Write the angles
-            ith_angle_dir = full_history_angles_dir / f"generated_{i}"
-            os.makedirs(ith_angle_dir, exist_ok=True)
-            for timestep, snapshot_df in enumerate(snapshot_dfs):
-                snapshot_df.to_csv(
-                    ith_angle_dir / f"generated_{i}_timestep_{timestep}.csv.gz"
-                )
-            # Write the pdb files
-            ith_pdb_dir = full_history_pdb_dir / f"generated_{i}"
-            write_preds_pdb_folder(
-                snapshot_dfs, ith_pdb_dir, basename_prefix=f"generated_{i}_timestep_"
-            )
+    generate_raports(args, final_sampled, outdir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
+                     test_dset, test_values_stacked, train_dset)
 
-    # Generate histograms of sampled angles -- separate plots, and a combined plot
-    # For calculating angle distributions
-    multi_fig, multi_axes = plt.subplots(
-        dpi=300, nrows=2, ncols=3, figsize=(14, 6), sharex=True
-    )
-    step_multi_fig, step_multi_axes = plt.subplots(
-        dpi=300, nrows=2, ncols=3, figsize=(14, 6), sharex=True
-    )
-    final_sampled_stacked = np.vstack(final_sampled)
-    for i, ft_name in enumerate(test_dset.feature_names["angles"]):
-        orig_values = (
-            test_values_stacked[:, i] if test_values_stacked is not None else None
-        )
-        samp_values = final_sampled_stacked[:, i]
 
-        ft_name_readable = FT_NAME_MAP[ft_name]
+def download_model(args):
+    if utils.is_huggingface_hub_id(args.model):
+        logging.info(f"Detected huggingface repo ID {args.model}")
+        dl_path = snapshot_download(args.model)  # Caching is automatic
+        assert os.path.isdir(dl_path)
+        logging.info(f"Using downloaded model at {dl_path}")
+        args.model = dl_path
 
-        # Plot single plots
-        plot_distribution_overlap(
-            {"Test": orig_values, "Sampled": samp_values},
-            title=f"Sampled angle distribution - {ft_name_readable}",
-            fname=plotdir / f"dist_{ft_name}.pdf",
-        )
-        plot_distribution_overlap(
-            {"Test": orig_values, "Sampled": samp_values},
-            title=f"Sampled angle CDF - {ft_name_readable}",
-            histtype="step",
-            cumulative=True,
-            fname=plotdir / f"cdf_{ft_name}.pdf",
-        )
 
-        # Plot combo plots
-        plot_distribution_overlap(
-            {"Test": orig_values, "Sampled": samp_values},
-            title=f"Sampled angle distribution - {ft_name_readable}",
-            ax=multi_axes.flatten()[i],
-            show_legend=i == 0,
-        )
-        plot_distribution_overlap(
-            {"Test": orig_values, "Sampled": samp_values},
-            title=f"Sampled angle CDF - {ft_name_readable}",
-            cumulative=True,
-            histtype="step",
-            ax=step_multi_axes.flatten()[i],
-            show_legend=i == 0,
-        )
-    multi_fig.savefig(plotdir / "dist_combined.pdf", bbox_inches="tight")
-    step_multi_fig.savefig(plotdir / "cdf_combined.pdf", bbox_inches="tight")
-
-    # Generate ramachandran plot for sampled angles
-    plot_ramachandran(
-        final_sampled_stacked[:, phi_idx],
-        final_sampled_stacked[:, psi_idx],
-        fname=plotdir / "ramachandran_generated.pdf",
-    )
-
-    # Generate plots of secondary structure co-occurrence
-    make_ss_cooccurrence_plot(
-        pdb_files,
-        str(outdir / "plots" / "ss_cooccurrence_sampled.pdf"),
-        threads=multiprocessing.cpu_count(),
-    )
+def compute_ramachandran_plot(args, phi_idx, plotdir, psi_idx, select_by_attn, test_dset):
     if args.testcomparison:
-        make_ss_cooccurrence_plot(
-            test_dset.filenames,
-            str(outdir / "plots" / "ss_cooccurrence_test.pdf"),
-            max_seq_len=test_dset.dset.pad,
-            threads=multiprocessing.cpu_count(),
+        test_values = [
+            select_by_attn(test_dset.dset.__getitem__(i, ignore_zero_center=True))
+            for i in range(len(test_dset))
+        ]
+        test_values_stacked = torch.cat(test_values, dim=0).cpu().numpy()
+
+        # Plot ramachandran plot for the training distribution
+        # Default figure size is 6.4x4.8 inches
+        plot_ramachandran(
+            test_values_stacked[:, phi_idx],
+            test_values_stacked[:, psi_idx],
+            annot_ss=True,
+            fname=plotdir / "ramachandran_test_annot.pdf",
         )
+    else:
+        test_values_stacked = None
+    return test_values_stacked
 
 
 if __name__ == '__main__':
