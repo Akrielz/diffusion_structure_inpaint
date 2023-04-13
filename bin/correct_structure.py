@@ -193,7 +193,7 @@ def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> 
     num_masked = len(masked_positions)
 
     # random_pos = torch.randperm(num_masked)[:num_missing]
-    random_pos = torch.tensor([i for i in range(4, 16)])
+    random_pos = torch.tensor([i for i in range(4, 16)] + [i for i in range(130, 140)])
 
     # create mask
     mask = torch.zeros_like(attn_mask)
@@ -324,6 +324,7 @@ def compute_ramachandran_plot(args, phi_idx, plotdir, psi_idx, select_by_attn, t
         )
     else:
         test_values_stacked = None
+
     return test_values_stacked
 
 

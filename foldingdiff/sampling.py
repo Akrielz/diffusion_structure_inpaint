@@ -243,7 +243,12 @@ def sample_missing_structure(
         cropped_attn_mask = original_features['attn_mask'][:, left:right]
         cropped_missing_info_mask = missing_info_mask[:, left:right]
 
+        # If there is nothing to infill, skip
         if cropped_missing_info_mask.sum() == 0:
+            continue
+
+        # If the infilled part is not in the first half too, move the window to give it more context
+        if left != left_indexes[-1] and cropped_missing_info_mask[:, :window_size // 2].sum() == 0:
             continue
 
         cropped_angles = infilled_angles[:, left:right]

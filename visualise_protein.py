@@ -24,8 +24,13 @@ def main():
     # fname = "generated_data_now_1/sampled_pdb/generated_0.pdb"
 
     # fname = "pdb_to_correct/generated_0.pdb"
-    fname = "pdb_corrected/sampled_pdb/generated_3.pdb"
+    # fname = "pdb_corrected/sampled_pdb/generated_0.pdb"
     # fname = "pdb_to_correct/generated_0_long.pdb"
+
+    # fname = "pdb_to_correct/1jrh.pdb"
+
+    fname = "pdb_to_correct/5f3b.pdb"
+    # fname = "pdb_to_correct/6e63.pdb"
 
     source_struct = read_pdb_file(fname)
     # filter just the CA
@@ -45,9 +50,11 @@ def main():
     ax.set_title("Protein")
 
     color_map = {
-        0: 'black',
+        0: 'green',
         4: 'red',
         16: 'green',
+        130: 'blue',
+        140: 'green'
     }
 
     # limit = 50
@@ -57,11 +64,19 @@ def main():
 
     color = "black"
     for i in range(len(coords) - 1):
-        # plot lines
+        # # plot lines
         if i in color_map:
             color = color_map[i]
 
-        ax.plot([coords[i][0], coords[i+1][0]], [coords[i][1], coords[i+1][1]], [coords[i][2], coords[i+1][2]], color=color)
+        # if source_struct[i].chain_id in color_map:
+        #     color = color_map[source_struct[i].chain_id]
+
+        ax.plot(
+            [coords[i][0], coords[i+1][0]],
+            [coords[i][1], coords[i+1][1]],
+            [coords[i][2], coords[i+1][2]],
+            color=color
+        )
 
     plt.show()
 
