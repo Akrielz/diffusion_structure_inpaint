@@ -6,7 +6,7 @@ import biotite
 import numpy as np
 from Bio import Align
 from Bio.pairwise2 import Alignment
-from biotite.structure import AtomArray
+from biotite.structure import AtomArray, filter_backbone
 from biotite.structure.io.pdb import PDBFile
 
 
@@ -61,6 +61,10 @@ def split_structure_by_chains(structure: AtomArray) -> Dict[str, AtomArray]:
 
 def get_num_residues(structure: AtomArray) -> int:
     return max(set(structure.res_id))
+
+
+def get_lowest_residue(structure: AtomArray) -> int:
+    return min(set(structure.res_id))
 
 
 def get_num_residues_by_chains(structure: AtomArray) -> Dict[str, int]:
@@ -186,8 +190,10 @@ def missing_residues_by_structure_look_residues_id(structure: AtomArray) -> Dict
     missing_residues_by_chains = {}
     for chain in chains:
         missing_residues_by_chains[chain] = []
-        for i in range(1, get_num_residues(structure[structure.chain_id == chain]) + 1):
-            if len(structure[(structure.chain_id == chain) & (structure.res_id == i)]) == 0:
+        chain_structure = structure[structure.chain_id == chain]
+
+        for i in range(get_lowest_residue(chain_structure), get_num_residues(chain_structure) + 1):
+            if len(chain_structure[chain_structure.res_id == i]) == 0:
                 missing_residues_by_chains[chain].append(i)
 
     return missing_residues_by_chains
@@ -207,9 +213,35 @@ def missing_residues_by_structure_continuity(structure: AtomArray) -> Dict[str, 
         for start, stop in zip(start_indexes_residues, stop_indexes_residues):
             missing_residues_by_chains[chain].extend(list(range(start+1, stop)))
 
-        missing_residues_by_chains[chain] = list(set(missing_residues_by_chains[chain]))
+        missing_residues_by_chains[chain] = sorted(list(set(missing_residues_by_chains[chain])))
 
     return missing_residues_by_chains
+
+
+def broken_residues_by_structure(structure: AtomArray):
+    backbone_mask = filter_backbone(structure)
+    backbone_structure = structure[backbone_mask]
+    chains = get_chains(structure)
+
+    broken_residues_by_chains = {}
+    for chain in chains:
+        broken_residues_by_chains[chain] = []
+
+        chain_structure = backbone_structure[backbone_structure.chain_id == chain]
+
+        for i in range(get_lowest_residue(backbone_structure), get_num_residues(backbone_structure) + 1):
+            backbone_residue = chain_structure[chain_structure.res_id == i]
+            n_atom = backbone_residue[backbone_residue.atom_name == "N"]
+            ca_atom = backbone_residue[backbone_residue.atom_name == "CA"]
+            c_atom = backbone_residue[backbone_residue.atom_name == "C"]
+
+            if len(backbone_residue) == 0:
+                continue
+
+            if len(n_atom) == 0 or len(ca_atom) == 0 or len(c_atom) == 0:
+                broken_residues_by_chains[chain].append(i)
+
+    return broken_residues_by_chains
 
 
 def main():
@@ -224,11 +256,13 @@ def main():
     missing_residues_header = missing_residues_by_sequence_alignment_by_chains(header_seq, structure_seq)
     missing_residues_struct_res = missing_residues_by_structure_look_residues_id(structure)
     missing_residues_struct_cont = missing_residues_by_structure_continuity(structure)
+    broken_residues_struct = broken_residues_by_structure(structure)
 
     print(order_keys_in_dict(missing_residues_header))
     print(order_keys_in_dict(missing_residues_struct_res))
     print(order_keys_in_dict(missing_residues_struct_cont))
-    # print(get_num_residues_backbone_by_chains(structure))
+    print(order_keys_in_dict(broken_residues_struct))
+    print(get_num_residues_backbone_by_chains(structure))
 
 
 if __name__ == "__main__":
