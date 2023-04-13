@@ -198,11 +198,16 @@ def missing_residues_by_structure_continuity(structure: AtomArray) -> Dict[str, 
     missing_residues_by_chains = {}
     for chain in chains:
         chain_structure = structure[(structure.chain_id == chain)]
-        missing_atoms_idx: np.ndarray = biotite.structure.check_bond_continuity(chain_structure)
-        missing_residues = list(set(chain_structure[missing_atoms_idx].res_id))
-        missing_residues_by_chains[chain] = missing_residues
+        stop_indexes_atoms: np.ndarray = biotite.structure.check_bond_continuity(chain_structure)
 
-        # TODO: Get the biggest residue id that is not missing but it's smaller than the missing residues
+        start_indexes_residues = chain_structure[stop_indexes_atoms-1].res_id
+        stop_indexes_residues = chain_structure[stop_indexes_atoms].res_id
+
+        missing_residues_by_chains[chain] = []
+        for start, stop in zip(start_indexes_residues, stop_indexes_residues):
+            missing_residues_by_chains[chain].extend(list(range(start+1, stop)))
+
+        missing_residues_by_chains[chain] = list(set(missing_residues_by_chains[chain]))
 
     return missing_residues_by_chains
 
