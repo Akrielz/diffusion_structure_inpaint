@@ -1,19 +1,4 @@
-import gzip
-
-import pandas
-from biotite.structure.io.pdb import PDBFile
-
-
-def read_pdb_file(fname: str):
-    opener = gzip.open if fname.endswith(".gz") else open
-    with opener(str(fname), "rt") as f:
-        source = PDBFile.read(f)
-    if source.get_model_count() > 1:
-        return None
-    # Pull out the atomarray from atomarraystack
-    source_struct = source.get_structure()[0]
-
-    return source_struct
+from bin.structure_utils import read_pdb_file
 
 
 def main():
@@ -29,12 +14,20 @@ def main():
 
     # fname = "pdb_to_correct/1jrh.pdb"
 
-    fname = "pdb_to_correct/5f3b.pdb"
+    # fname = "pdb_to_correct/5f3b.pdb"
     # fname = "pdb_to_correct/6e63.pdb"
+
+    fname = "pdb_to_correct/5f3b.pdb"
 
     source_struct = read_pdb_file(fname)
     # filter just the CA
     source_struct = source_struct[source_struct.atom_name == "CA"]
+
+    # filter out only for chain C
+    source_struct = source_struct[source_struct.chain_id == "C"]
+
+    # only first 30 residues
+    source_struct = source_struct[:30]
 
     # Get the atom coordinates
     coords = source_struct.coord
@@ -51,8 +44,8 @@ def main():
 
     color_map = {
         0: 'green',
-        4: 'red',
-        16: 'green',
+        9: 'red',
+        19: 'green',
         130: 'blue',
         140: 'green'
     }
