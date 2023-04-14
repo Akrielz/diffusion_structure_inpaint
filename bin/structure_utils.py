@@ -316,7 +316,10 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, List[int]]:
         for chain in missing_residues_header.keys():
             alignment_found = False
             for alignment in missing_residues_header[chain]:
-                if set(missing_residues_struct_res[chain]) not in set(alignment):
+                if alignment_found:
+                    break
+
+                if set(missing_residues_struct_res[chain]).issubset(set(alignment)):
                     continue
 
                 # If the alignment is correct, we can use it
@@ -325,7 +328,7 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, List[int]]:
 
             # If we didn't find any alignment, we will use the first alignment from the header
             # which also has the highest score
-            if not alignment_found:
+            if not alignment_found and len(missing_residues_header[chain]) > 0:
                 missing_residues[chain] = missing_residues_header[chain][0]
 
     # And now we augment the missing residues with the broken residues
@@ -351,7 +354,7 @@ def keep_only_plausible_alignments(missing_residues_header, structure):
     missing_residues_plausible = defaultdict(list)
     for chain in missing_residues_header.keys():
         for i, alignment in enumerate(missing_residues_header[chain]):
-            # check if all the residues in aligment exist in the structure
+            # check if all the residues in alignment exist in the structure
             structure_chain = structure[structure.chain_id == chain]
             res_ids_in_structure = set(structure_chain.res_id)
 
@@ -366,9 +369,9 @@ def keep_only_plausible_alignments(missing_residues_header, structure):
 
 
 def main():
-    # file_name = "pdb_to_correct/5f3b.pdb"
+    file_name = "pdb_to_correct/5f3b.pdb"
     # file_name = "pdb_to_correct/2ZJR_W_broken.pdb"
-    file_name = "pdb_to_correct/6fp7.pdb"
+    # file_name = "pdb_to_correct/6fp7.pdb"
 
     structure = read_pdb_file(file_name)
 
