@@ -1,4 +1,5 @@
 import gzip
+import json
 from collections import defaultdict
 from copy import deepcopy
 from typing import Optional, List, Dict, Any
@@ -190,7 +191,6 @@ def missing_residues_by_sequence_alignment(
 
         if not all_alignments:
             break
-
 
     return missing_residues_by_alignment
 
@@ -430,7 +430,7 @@ def mock_missing_info(
 
             # This is the case for missing residues
             elif header_seq is not None:
-                index = residue_id - start_index + 1
+                index = residue_id - start_index
                 missing_aa = header_seq[chain][index]
                 missing_aa_3 = d1to3[missing_aa]
 
@@ -474,29 +474,106 @@ def mock_missing_info(
     write_atom_array_to_pdb(new_atom_array, out_pdb_file)
 
     # add the old header to the new file
-    with open(out_pdb_file, "r") as f:
-        atom_lines = f.readlines()
-    new_pdb_lines = deepcopy(header)
-    new_pdb_lines[-1] += "\n"
-    new_pdb_lines.extend(atom_lines)
-    with open(out_pdb_file, "w") as f:
-        f.write("".join(new_pdb_lines))
+    add_header_info(header, out_pdb_file)
+
+    start_indexes = {
+        chain: get_lowest_residue(structure[structure.chain_id == chain])
+        for chain in chains
+    }
+
+    missing_info = {
+        "missing_residues_id": missing_residues_id,
+        "start_indexes": start_indexes
+    }
+
+    # write in out_pdb_file + ".missing" the missing residues as a json
+    with open(out_pdb_file + ".missing", "w") as f:
+        json.dump(missing_info, f)
+
     return new_atom_array
 
 
+def add_header_info(
+        header: List[str],
+        out_pdb_file: str
+):
+    with open(out_pdb_file, "r") as f:
+        atom_lines = f.readlines()
+
+    new_pdb_lines = deepcopy(header)
+    new_pdb_lines[-1] += "\n"
+    new_pdb_lines.extend(atom_lines)
+
+    with open(out_pdb_file, "w") as f:
+        f.write("".join(new_pdb_lines))
+
+
+def determine_quality_of_structure(
+        structure: AtomArray,
+):
+    """
+    This is a very simple function that determines the quality of a structure based
+    on the distances between the backbone atoms. Because of that, it only works
+    for fully defined structures.
+
+    The lower the score, the better the structure.
+
+    Quality range: [0, inf)
+    """
+
+    n_ca_dist = 1.46  # Check, approximately right
+    ca_c_dist = 1.54  # Check, approximately right
+    c_n_dist = 1.34  # Check, approximately right
+
+    chains = get_chains(structure)
+    quality = {
+        chain: 0.0
+        for chain in chains
+    }
+
+    for chain in chains:
+        chain_structure = structure[structure.chain_id == chain]
+
+        # filter just the backbone of the chain
+        backbone = chain_structure[
+            filter_backbone(chain_structure)
+        ]
+
+        # get the coordinates of the backbone
+        backbone_coords = backbone.coord
+
+        # get the distances between the backbone atoms
+        atom_dist = np.linalg.norm(backbone_coords[1:] - backbone_coords[:-1], axis=1)
+
+        n_ca_len_diff = np.abs(atom_dist[::3] - n_ca_dist)
+        ca_c_len_diff = np.abs(atom_dist[1::3] - ca_c_dist)
+        c_n_len_diff = np.abs(atom_dist[2::3] - c_n_dist)
+
+        # the quality of a chain is the sum of the differences
+        quality[chain] = np.sum(
+            np.concatenate([n_ca_len_diff, ca_c_len_diff, c_n_len_diff])
+        )
+
+    # Quality score is the mean of the quality of each chain
+    quality_score = np.mean(list(quality.values()))
+
+    return quality_score
+
+
 def main():
+    # file_name = "pdb_to_correct/2ZJR_W.pdb"
     # file_name = "pdb_to_correct/5f3b.pdb"
-    file_name = "pdb_to_correct/2ZJR_W_broken.pdb"
+    # file_name = "pdb_to_correct/2ZJR_W_broken.pdb"
     # file_name = "pdb_to_correct/6fp7.pdb"
 
-    structure = read_pdb_file(file_name)
+    file_names = [
+        f"pdb_corrected/sampled_pdb/generated_{i}.pdb"
+        for i in range(4)
+    ]
 
-    missing_residues_heuristic = determine_missing_residues(file_name)
-
-    print(order_keys_in_dict(missing_residues_heuristic))
-    print(get_num_residues_backbone_by_chains(structure))
-
-    mock_missing_info(file_name, "pdb_to_correct/mocked.pdb")
+    for file_name in file_names:
+        structure = read_pdb_file(file_name)
+        print(determine_quality_of_structure(structure))
 
 
 if __name__ == "__main__":

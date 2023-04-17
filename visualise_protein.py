@@ -18,9 +18,9 @@ def main():
 
     # fname = "pdb_to_correct/5f3b.pdb"
 
-    fname = "pdb_to_correct/2ZJR_W.pdb"
-    fname = "pdb_to_correct/mocked.pdb"
-    fname = "pdb_corrected/sampled_pdb/generated_0.pdb"
+    # fname = "pdb_to_correct/2ZJR_W.pdb"
+    # fname = "pdb_to_correct/mocked.pdb"
+    fname = "pdb_corrected/sampled_pdb/generated_3.pdb"
 
     source_struct = read_pdb_file(fname)
     # filter just the CA

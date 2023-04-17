@@ -1,4 +1,5 @@
 import gzip
+import json
 import os
 import argparse
 import logging
@@ -17,6 +18,7 @@ from torch.utils.data import DataLoader
 
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
     write_corrected_structures, generate_raports
+from bin.structure_utils import mock_missing_info, get_lowest_residue
 
 from foldingdiff import modelling
 from foldingdiff import sampling
@@ -203,6 +205,32 @@ def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> 
     return mask
 
 
+def load_missing_info_mask(
+        missing_info_mask_file: str,
+        attention_mask: torch.Tensor
+) -> torch.Tensor:
+
+    # Load the json file
+    with open(missing_info_mask_file, "r") as f:
+        missing_info_mask: Dict = json.load(f)
+
+    # Extract the missing_residues_id
+    missing_residues_id = missing_info_mask["missing_residues_id"]
+    start_indexes = missing_info_mask["start_indexes"]
+
+    chains = list(missing_residues_id.keys())
+    for chain in chains:
+        start_index = start_indexes[chain]
+        missing_residues_id[chain] = [i - start_index for i in missing_residues_id[chain]]
+
+    # Create the mask
+    mask = torch.zeros_like(attention_mask)
+    for chain in chains:
+        mask[:, missing_residues_id[chain]] = 1
+
+    return mask
+
+
 def compute_pad_len(real_len, window_size, window_step):
     # We must have the pad len at least the window_size due to the model
     pad_len = max(window_size, real_len)
@@ -246,12 +274,18 @@ def main():
         args, phi_idx, plotdir, psi_idx, select_by_attn, test_dset
     )
 
+    # Mock the pdb to correct file
+    mocked_pdb_file_path = str(outdir / "mocked_pdb/mocked.pdb")
+    os.makedirs(outdir / "mocked_pdb", exist_ok=True)
+    mock_missing_info(args.pdb_to_correct, mocked_pdb_file_path)
+    missing_residues_file = mocked_pdb_file_path + ".missing"
+
     # Load the structure to correct
     to_correct_real_len = get_real_len_of_structure(args.pdb_to_correct)
     pad_len = compute_pad_len(to_correct_real_len, args.window_size, args.window_step)
     to_correct_features = read_to_correct_structure(args.pdb_to_correct, pad_len)
     to_correct_features = overwrite_the_angles(to_correct_features, args.pdb_to_correct, train_dset, pad_len)
-    to_correct_mask = mock_missing_info_mask(to_correct_features, num_missing=4)
+    to_correct_mask = load_missing_info_mask(missing_residues_file, to_correct_features["attn_mask"])
 
     # Load the model
     model_snapshot_dir = outdir / "model_snapshot"
