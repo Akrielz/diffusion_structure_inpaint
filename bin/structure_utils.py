@@ -11,6 +11,7 @@ from Bio.pairwise2 import Alignment
 from biotite.structure import AtomArray, filter_backbone, Atom
 from biotite.structure import array as struct_array
 from biotite.structure.io.pdb import PDBFile
+from matplotlib import pyplot as plt
 
 from foldingdiff.angles_and_coords import write_atom_array_to_pdb
 
@@ -105,11 +106,14 @@ def read_pdb_header(file_name: str) -> List[str]:
 
     # get all the lines until the first ATOM
 
+    body_lines = ["ATOM", "HETATM"]
+
     stop_pointer = 0
     for i, line in enumerate(source.lines):
-        if line.startswith("ATOM"):
-            stop_pointer = i
-            break
+        for body_line in body_lines:
+            if line.startswith(body_line):
+                stop_pointer = i
+                break
 
     return source.lines[:stop_pointer]
 
@@ -560,20 +564,59 @@ def determine_quality_of_structure(
     return quality_score
 
 
+def create_distance_histogram(
+        structure: AtomArray,
+):
+    chains = get_chains(structure)
+
+    for chain in chains:
+        chain_structure = structure[structure.chain_id == chain]
+
+        # filter just the backbone of the chain
+        backbone = chain_structure[
+            filter_backbone(chain_structure)
+        ]
+
+        # get the coordinates of the backbone
+        backbone_coords = backbone.coord
+
+        # get the distances between the backbone atoms
+        atom_dist = np.linalg.norm(backbone_coords[1:] - backbone_coords[:-1], axis=1)
+
+        n_ca_dist = atom_dist[::3]
+        ca_c_dist = atom_dist[1::3]
+        c_n_dist = atom_dist[2::3]
+
+    plt.hist(n_ca_dist, bins=100, alpha=0.5, label="N-CA")
+    plt.hist(ca_c_dist, bins=100, alpha=0.5, label="CA-C")
+    plt.hist(c_n_dist, bins=100, alpha=0.5, label="C-N")
+    plt.legend(loc="upper right")
+    plt.show()
+
+
 def main():
     # file_name = "pdb_to_correct/2ZJR_W.pdb"
     # file_name = "pdb_to_correct/5f3b.pdb"
     # file_name = "pdb_to_correct/2ZJR_W_broken.pdb"
     # file_name = "pdb_to_correct/6fp7.pdb"
 
-    file_names = [
-        f"pdb_corrected/sampled_pdb/generated_{i}.pdb"
-        for i in range(4)
-    ]
+    create_distance_histogram(read_pdb_file("pdb_to_correct/2ZJR_W.pdb"))
 
-    for file_name in file_names:
-        structure = read_pdb_file(file_name)
-        print(determine_quality_of_structure(structure))
+    # file_names = [
+    #     f"pdb_corrected/sampled_pdb/generated_{i}.pdb"
+    #     for i in range(128)
+    # ]
+    #
+    # qualities = []
+    # for file_name in file_names:
+    #     structure = read_pdb_file(file_name)
+    #     quality = determine_quality_of_structure(structure)
+    #     qualities.append(quality)
+    #
+    # print(qualities)
+    # # print the index with the lowest quality
+    # print(np.argmin(qualities))
+    # print("Lowest quality: ", np.min(qualities))
 
 
 if __name__ == "__main__":

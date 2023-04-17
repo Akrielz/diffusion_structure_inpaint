@@ -20,7 +20,7 @@ def main():
 
     # fname = "pdb_to_correct/2ZJR_W.pdb"
     # fname = "pdb_to_correct/mocked.pdb"
-    fname = "pdb_corrected/sampled_pdb/generated_3.pdb"
+    fname = "pdb_corrected/sampled_pdb/generated_41.pdb"
 
     source_struct = read_pdb_file(fname)
     # filter just the CA
@@ -41,7 +41,7 @@ def main():
 
     color_map = {
         0: 'green',
-        6: 'red',
+        5: 'red',
         8: 'green',
         130: 'blue',
         140: 'green'
