@@ -12,3 +12,5 @@ astropy
 gitpython
 biotite==0.34
 requests
+pybind11
+faspr
