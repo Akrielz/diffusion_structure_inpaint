@@ -193,7 +193,7 @@ def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> 
     num_masked = len(masked_positions)
 
     # random_pos = torch.randperm(num_masked)[:num_missing]
-    random_pos = torch.tensor([i for i in range(4, 16)] + [i for i in range(130, 140)])
+    random_pos = torch.tensor([i for i in range(6, 8)])
 
     # create mask
     mask = torch.zeros_like(attn_mask)

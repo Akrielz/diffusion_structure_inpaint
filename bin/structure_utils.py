@@ -1,14 +1,17 @@
 import gzip
 from collections import defaultdict
+from copy import deepcopy
 from typing import Optional, List, Dict, Any
 
 import biotite
 import numpy as np
 from Bio import Align
 from Bio.pairwise2 import Alignment
-from biotite.structure import AtomArray, filter_backbone
+from biotite.structure import AtomArray, filter_backbone, Atom
+from biotite.structure import array as struct_array
 from biotite.structure.io.pdb import PDBFile
 
+from foldingdiff.angles_and_coords import write_atom_array_to_pdb
 
 d3to1 = {
     'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': 'K',
@@ -16,6 +19,8 @@ d3to1 = {
     'GLY': 'G', 'HIS': 'H', 'LEU': 'L', 'ARG': 'R', 'TRP': 'W',
     'ALA': 'A', 'VAL': 'V', 'GLU': 'E', 'TYR': 'Y', 'MET': 'M'
 }
+
+d1to3 = {v: k for k, v in d3to1.items()}
 
 
 MissingResidues = List[int]
@@ -273,7 +278,7 @@ def broken_residues_by_structure(structure: AtomArray):
     return broken_residues_by_chains
 
 
-def determine_missing_residues(pdb_file: str) -> Dict[str, List[int]]:
+def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
 
     # Get the info
     header = read_pdb_header(pdb_file)
@@ -307,9 +312,9 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, List[int]]:
     if missing_residues_header is not None:
 
         # Reindex the missing residues by header
-        structure = reindex_aligments(missing_residues_header, structure)
+        structure = reindex_alignments(missing_residues_header, structure)
 
-        # We need to drop all the aligments which include already existent residues
+        # We need to drop all the alignments which include already existent residues
         missing_residues_header = keep_only_plausible_alignments(missing_residues_header, structure)
 
         # We need to check all the given alignments to decide which is the best for each chain
@@ -339,7 +344,10 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, List[int]]:
     return missing_residues
 
 
-def reindex_aligments(missing_residues_header, structure):
+def reindex_alignments(
+        missing_residues_header: Dict[str, List[MissingResidues]],
+        structure: AtomArray
+):
     for chain in missing_residues_header.keys():
         chain_struct = structure[structure.chain_id == chain]
         start_index = get_lowest_residue(chain_struct)
@@ -347,6 +355,7 @@ def reindex_aligments(missing_residues_header, structure):
         for i, alignment in enumerate(missing_residues_header[chain]):
             indexes = np.array(alignment) + start_index - 1
             missing_residues_header[chain][i] = indexes.tolist()
+
     return structure
 
 
@@ -368,9 +377,116 @@ def keep_only_plausible_alignments(missing_residues_header, structure):
     return missing_residues_header
 
 
+def get_all_residues_id(
+        structure: AtomArray,
+        missing_residues_id: Dict[str, MissingResidues]
+) -> Dict[str, List[int]]:
+
+    all_residues_id = {
+        chain: []
+        for chain in missing_residues_id.keys()
+    }
+    for chain in missing_residues_id.keys():
+        chain_struct = structure[structure.chain_id == chain]
+        chain_residues = set(missing_residues_id[chain]).union(set(chain_struct.res_id))
+        all_residues_id[chain] = sorted(list(chain_residues))
+
+    return all_residues_id
+
+
+def mock_missing_info(
+        in_pdb_file: str,
+        out_pdb_file: str
+):
+    structure = read_pdb_file(in_pdb_file)
+    missing_residues_id = determine_missing_residues(in_pdb_file)
+    all_residues_id = get_all_residues_id(structure, missing_residues_id)
+
+    header = read_pdb_header(in_pdb_file)
+    header_seq = get_sequence_from_header(header)
+    chains = get_chains(structure)
+
+    new_residues = {
+        chain: []
+        for chain in chains
+    }
+
+    for chain in chains:
+        chain_structure = structure[structure.chain_id == chain]
+        start_index = get_lowest_residue(chain_structure)
+
+        for residue_id in all_residues_id[chain]:
+
+            if residue_id not in missing_residues_id[chain]:
+                residue = chain_structure[chain_structure.res_id == residue_id]
+                new_residues[chain].append(residue)
+                continue
+
+            missing_aa_3 = "GLY"
+            # This is the case for broken existent residues
+            if residue_id in chain_structure.res_id:
+                first_atom = chain_structure[chain_structure.res_id == residue_id][0]
+                missing_aa_3 = first_atom.res_name
+
+            # This is the case for missing residues
+            elif header_seq is not None:
+                index = residue_id - start_index + 1
+                missing_aa = header_seq[chain][index]
+                missing_aa_3 = d1to3[missing_aa]
+
+            n_atom = Atom(
+                coord=np.random.rand(3),
+                chain_id=chain,
+                res_id=residue_id,
+                res_name=missing_aa_3,
+                atom_name="N",
+                element="N",
+            )
+
+            ca_atom = Atom(
+                coord=np.random.rand(3),
+                chain_id=chain,
+                res_id=residue_id,
+                res_name=missing_aa_3,
+                atom_name="CA",
+                element="C",
+            )
+
+            c_atom = Atom(
+                coord=np.random.rand(3),
+                chain_id=chain,
+                res_id=residue_id,
+                res_name=missing_aa_3,
+                atom_name="C",
+                element="C",
+            )
+
+            residue = [n_atom, ca_atom, c_atom]
+            new_residue = struct_array(residue)
+            new_residues[chain].append(new_residue)
+
+    atom_arrays = []
+    for chain in chains:
+        for residue in new_residues[chain]:
+            atom_arrays.extend(residue)
+
+    new_atom_array = struct_array(atom_arrays)
+    write_atom_array_to_pdb(new_atom_array, out_pdb_file)
+
+    # add the old header to the new file
+    with open(out_pdb_file, "r") as f:
+        atom_lines = f.readlines()
+    new_pdb_lines = deepcopy(header)
+    new_pdb_lines[-1] += "\n"
+    new_pdb_lines.extend(atom_lines)
+    with open(out_pdb_file, "w") as f:
+        f.write("".join(new_pdb_lines))
+    return new_atom_array
+
+
 def main():
-    file_name = "pdb_to_correct/5f3b.pdb"
-    # file_name = "pdb_to_correct/2ZJR_W_broken.pdb"
+    # file_name = "pdb_to_correct/5f3b.pdb"
+    file_name = "pdb_to_correct/2ZJR_W_broken.pdb"
     # file_name = "pdb_to_correct/6fp7.pdb"
 
     structure = read_pdb_file(file_name)
@@ -379,6 +495,8 @@ def main():
 
     print(order_keys_in_dict(missing_residues_heuristic))
     print(get_num_residues_backbone_by_chains(structure))
+
+    mock_missing_info(file_name, "pdb_to_correct/mocked.pdb")
 
 
 if __name__ == "__main__":

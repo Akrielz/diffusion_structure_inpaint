@@ -5,7 +5,6 @@ def main():
     # fname = "pdb_to_correct/2ZJR_W.pdb"
     # fname = "pdb_corrected/sampled_pdb/generated_1.pdb"
     # fname = "pdb_to_correct/2ZJR_W.pdb"
-    # fname = "/home/alexandru/code/foldingdiff/data/cath/dompdb/2pfuA01"
     # fname = "generated_data_now_1/sampled_pdb/generated_0.pdb"
 
     # fname = "pdb_to_correct/generated_0.pdb"
@@ -17,17 +16,15 @@ def main():
     # fname = "pdb_to_correct/5f3b.pdb"
     # fname = "pdb_to_correct/6e63.pdb"
 
-    fname = "pdb_to_correct/5f3b.pdb"
+    # fname = "pdb_to_correct/5f3b.pdb"
+
+    fname = "pdb_to_correct/2ZJR_W.pdb"
+    fname = "pdb_to_correct/mocked.pdb"
+    fname = "pdb_corrected/sampled_pdb/generated_0.pdb"
 
     source_struct = read_pdb_file(fname)
     # filter just the CA
     source_struct = source_struct[source_struct.atom_name == "CA"]
-
-    # filter out only for chain C
-    source_struct = source_struct[source_struct.chain_id == "C"]
-
-    # only first 30 residues
-    source_struct = source_struct[:30]
 
     # Get the atom coordinates
     coords = source_struct.coord
@@ -44,8 +41,8 @@ def main():
 
     color_map = {
         0: 'green',
-        9: 'red',
-        19: 'green',
+        6: 'red',
+        8: 'green',
         130: 'blue',
         140: 'green'
     }
