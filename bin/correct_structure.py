@@ -281,10 +281,10 @@ def main():
     missing_residues_file = mocked_pdb_file_path + ".missing"
 
     # Load the structure to correct
-    to_correct_real_len = get_real_len_of_structure(args.pdb_to_correct)
+    to_correct_real_len = get_real_len_of_structure(mocked_pdb_file_path)
     pad_len = compute_pad_len(to_correct_real_len, args.window_size, args.window_step)
-    to_correct_features = read_to_correct_structure(args.pdb_to_correct, pad_len)
-    to_correct_features = overwrite_the_angles(to_correct_features, args.pdb_to_correct, train_dset, pad_len)
+    to_correct_features = read_to_correct_structure(mocked_pdb_file_path, pad_len)
+    to_correct_features = overwrite_the_angles(to_correct_features, mocked_pdb_file_path, train_dset, pad_len)
     to_correct_mask = load_missing_info_mask(missing_residues_file, to_correct_features["attn_mask"])
 
     # Load the model
@@ -322,7 +322,7 @@ def main():
         s.to_csv(sampled_angles_folder / f"generated_{i}.csv.gz")
 
     # read the atom_array of the structure to correct
-    to_correct_atom_array = read_pdb_file(args.pdb_to_correct)
+    to_correct_atom_array = read_pdb_file(mocked_pdb_file_path)
 
     # Write the sampled angles as pdb files
     pdb_files = write_corrected_structures(sampled_dfs, outdir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
