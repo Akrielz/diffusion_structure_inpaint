@@ -6,12 +6,13 @@ from typing import Optional, List, Dict, Any
 
 import biotite
 import numpy as np
+import torch
 from Bio import Align
 from Bio.pairwise2 import Alignment
 from biotite.structure import AtomArray, filter_backbone, Atom
 from biotite.structure import array as struct_array
 from biotite.structure.io.pdb import PDBFile
-from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 from foldingdiff.angles_and_coords import write_atom_array_to_pdb
 
@@ -23,6 +24,10 @@ d3to1 = {
 }
 
 d1to3 = {v: k for k, v in d3to1.items()}
+
+n_ca_dist = 1.46  # Check, approximately right
+ca_c_dist = 1.54  # Check, approximately right
+c_n_dist = 1.34  # Check, approximately right
 
 
 MissingResidues = List[int]
@@ -525,10 +530,6 @@ def determine_quality_of_structure(
     Quality range: [0, inf)
     """
 
-    n_ca_dist = 1.46  # Check, approximately right
-    ca_c_dist = 1.54  # Check, approximately right
-    c_n_dist = 1.34  # Check, approximately right
-
     chains = get_chains(structure)
     quality = {
         chain: 0.0
@@ -612,27 +613,113 @@ def compute_median_backbone_distances(structure: AtomArray):
     return median_backbone_distances
 
 
+def backbone_loss_function(coords: torch.Tensor):
+    atom_dist = torch.norm(coords[1:] - coords[:-1], dim=1)
+    n_ca_dist_diff = (atom_dist[::3] - n_ca_dist) ** 2
+    ca_c_dist_diff = (atom_dist[1::3] - ca_c_dist) ** 2
+    c_n_dist_diff = (atom_dist[2::3] - c_n_dist) ** 2
+
+    all_diffs = torch.cat([n_ca_dist_diff, ca_c_dist_diff, c_n_dist_diff])
+    return all_diffs.sum()
+
+
+def atom_loss_function(coords: torch.Tensor, contact_distance=1.2):
+    # Make a distance matrix
+    dist_mat = torch.cdist(coords, coords)
+
+    # Compute the diagonal and non-contact masks
+    diagonal_mask = torch.eye(dist_mat.shape[0], device=coords.device, dtype=torch.bool)
+    non_contacts = dist_mat > contact_distance
+
+    # Inverse the distance matrix
+    dist_mat = contact_distance - dist_mat
+    dist_mat[non_contacts] = 0
+    dist_mat[diagonal_mask] = 0
+
+    return dist_mat.sum()
+
+
+def gradient_descent_on_physical_constraints(
+        coords: torch.Tensor,
+        mask: torch.Tensor,
+        num_epochs: int = 1000,
+        device: torch.device = torch.device("cpu"),
+        stop_patience: int = 10,
+):
+    coords = torch.nn.Parameter(coords.to(device))
+    optimizer = torch.optim.Adam([coords], lr=0.01)
+    mask = mask.to(device)
+
+    constant_loss = 0
+    prev_loss = 0
+
+    progress_bar = tqdm(range(num_epochs))
+    for _ in progress_bar:
+        optimizer.zero_grad()
+        loss1 = backbone_loss_function(coords)
+        loss2 = atom_loss_function(coords)
+
+        loss = loss1 + loss2
+        loss_value = loss.detach().cpu().item()
+
+        progress_bar.set_description(f"Loss: {loss_value:.3f}")
+
+        # We want to apply the backprop only on the masked values
+        loss.backward(retain_graph=True)
+        coords._grad *= mask
+        optimizer.step()
+
+        if prev_loss == loss_value:
+            constant_loss += 1
+
+        if constant_loss >= stop_patience:
+            break
+
+        prev_loss = loss_value
+
+    return coords
+
+
+def add_physical_constraints(
+        structure: AtomArray,
+        missing_residues_ids: List[int],
+        num_epochs: int = 1000,
+        device: torch.device = torch.device("cpu"),
+        stop_patience: int = 10,
+):
+    backbone_structure = structure[filter_backbone(structure)]
+    coords = backbone_structure.coord
+    coords = torch.tensor(coords, dtype=torch.float32)
+
+    mask = torch.zeros_like(coords).bool()
+    mask[[i for i in range(18, 24)]] = True
+
+    coords = gradient_descent_on_physical_constraints(
+        coords, mask, num_epochs=num_epochs, device=device, stop_patience=stop_patience
+    )
+
+    # TODO: Add the coords to the structure
+
+    return structure
+
+
 def main():
     # file_name = "pdb_to_correct/2ZJR_W.pdb"
     # file_name = "pdb_to_correct/5f3b.pdb"
     # file_name = "pdb_to_correct/2ZJR_W_broken.pdb"
     # file_name = "pdb_to_correct/6fp7.pdb"
 
-    file_names = [
-        f"pdb_corrected/sampled_pdb/generated_{i}.pdb"
-        for i in range(128)
-    ]
+    file_name = "pdb_corrected/sampled_pdb/generated_0.pdb"
+    structure = read_pdb_file(file_name)
+    structure = add_physical_constraints(
+        structure,
+        missing_residues_ids=None,
+        num_epochs=10000,
+        device=torch.device("cuda:0"),
+        stop_patience=10,
+    )
 
-    qualities = []
-    for file_name in file_names:
-        structure = read_pdb_file(file_name)
-        quality = determine_quality_of_structure(structure)
-        qualities.append(quality)
-
-    print(qualities)
-    # print the index with the lowest quality
-    print(np.argmin(qualities))
-    print("Lowest quality: ", np.min(qualities))
+    print("done")
 
 
 if __name__ == "__main__":

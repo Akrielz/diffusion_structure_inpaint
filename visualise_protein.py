@@ -19,8 +19,9 @@ def main():
     # fname = "pdb_to_correct/5f3b.pdb"
 
     # fname = "pdb_to_correct/2ZJR_W.pdb"
+    # fname = "pdb_to_correct/2ZJR_W_broken.pdb"
     # fname = "pdb_to_correct/mocked.pdb"
-    fname = "pdb_corrected/sampled_pdb/generated_41.pdb"
+    fname = "pdb_corrected/best_pdb/best.pdb"
 
     source_struct = read_pdb_file(fname)
     # filter just the CA
@@ -57,9 +58,6 @@ def main():
         # # plot lines
         if i in color_map:
             color = color_map[i]
-
-        # if source_struct[i].chain_id in color_map:
-        #     color = color_map[source_struct[i].chain_id]
 
         ax.plot(
             [coords[i][0], coords[i+1][0]],

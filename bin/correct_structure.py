@@ -18,25 +18,13 @@ from torch.utils.data import DataLoader
 
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
     write_corrected_structures, generate_raports
-from bin.structure_utils import mock_missing_info, get_lowest_residue
+from bin.structure_utils import mock_missing_info, get_lowest_residue, determine_quality_of_structure, read_pdb_file
 
 from foldingdiff import modelling
 from foldingdiff import sampling
 from foldingdiff.datasets import NoisedAnglesDataset, CathCanonicalAnglesOnlyDataset
 from foldingdiff.angles_and_coords import canonical_distances_and_dihedrals, EXHAUSTIVE_ANGLES
 from foldingdiff import utils
-
-
-def read_pdb_file(fname: str) -> Optional[AtomArray]:
-    opener = gzip.open if fname.endswith(".gz") else open
-    with opener(str(fname), "rt") as f:
-        source = PDBFile.read(f)
-    if source.get_model_count() > 1:
-        return None
-    # Pull out the atomarray from atomarraystack
-    source_struct = source.get_structure()[0]
-
-    return source_struct
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -329,6 +317,17 @@ def main():
 
     generate_raports(args, final_sampled, outdir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
                      test_dset, test_values_stacked, train_dset)
+
+    # Iterate through the generated structures and compute their quality
+    scores = [determine_quality_of_structure(read_pdb_file(pdb_file)) for pdb_file in pdb_files]
+
+    # Get the lowest score / best structure
+    best_structure = pdb_files[np.argmin(scores)]
+
+    # Write the best structure to a file
+    # Make the directory for the best
+    os.makedirs(outdir / "best_pdb", exist_ok=True)
+    shutil.copy(best_structure, outdir / "best_pdb/best.pdb")
 
 
 def download_model(args):
