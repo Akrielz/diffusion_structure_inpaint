@@ -341,7 +341,7 @@ def train(
     func_args = locals()
 
     results_folder = Path(results_dir)
-    record_args_and_metadata(func_args, results_folder)
+    # record_args_and_metadata(func_args, results_folder)
 
     # Get datasets and wrap them in dataloaders
     dsets = get_train_valid_test_sets(

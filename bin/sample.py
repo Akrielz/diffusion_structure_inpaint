@@ -27,7 +27,7 @@ from foldingdiff import modelling
 from foldingdiff import sampling
 from foldingdiff import plotting
 from foldingdiff.datasets import AnglesEmptyDataset, NoisedAnglesDataset
-from foldingdiff.angles_and_coords import create_new_chain_nerf
+from foldingdiff.angles_and_coords import create_new_chain_nerf_to_file, create_corrected_structure
 from foldingdiff import utils
 
 # :)
@@ -121,9 +121,44 @@ def write_preds_pdb_folder(
         (os.path.join(outdir, f"{basename_prefix}{i}.pdb"), samp)
         for i, samp in enumerate(final_sampled)
     ]
+
+    # file_written = create_new_chain_nerf_to_file(*arg_tuples[0])
+    # files_written = [file_written]
+
     # Write in parallel
     with multiprocessing.Pool(threads) as pool:
-        files_written = pool.starmap(create_new_chain_nerf, arg_tuples)
+        files_written = pool.starmap(create_new_chain_nerf_to_file, arg_tuples)
+
+    return files_written
+
+
+def write_corrected_structures(
+        final_sampled: Sequence[pd.DataFrame],
+        outdir: str,
+        to_correct_atom_array,
+        to_correct_mask,
+        basename_prefix: str = "generated_",
+        threads: int = multiprocessing.cpu_count(),
+):
+    """
+    Write the predictions as pdb files in the given folder along with information regarding the
+    tm_score for each prediction. Returns the list of files written.
+    """
+    os.makedirs(outdir, exist_ok=True)
+    logging.info(
+        f"Writing sampled angles as PDB files to {outdir} using {threads} threads"
+    )
+    # Create the pairs of arguments
+    arg_tuples = [
+        (os.path.join(outdir, f"{basename_prefix}{i}.pdb"), samp, to_correct_atom_array, to_correct_mask)
+        for i, samp in enumerate(final_sampled)
+    ]
+
+    # create_corrected_structure(*arg_tuples[0])
+
+    # Write in parallel
+    with multiprocessing.Pool(threads) as pool:
+        files_written = pool.starmap(create_corrected_structure, arg_tuples)
 
     return files_written
 
@@ -361,6 +396,13 @@ def main() -> None:
         for s in final_sampled
     ]
 
+    # # The sampled_dfs has 126 rows. Add again the last 32 rows to make it 158 rows
+    # sampled_dfs = [pd.concat([s, s.copy().iloc[-64:]], axis=0) for s in sampled_dfs]
+    #
+    # # rewrite the index
+    # for i, s in enumerate(sampled_dfs):
+    #     s.index = range(len(s))
+
     # Write the raw sampled items to csv files
     sampled_angles_folder = outdir / "sampled_angles"
     os.makedirs(sampled_angles_folder, exist_ok=True)
@@ -370,6 +412,12 @@ def main() -> None:
     # Write the sampled angles as pdb files
     pdb_files = write_preds_pdb_folder(sampled_dfs, outdir / "sampled_pdb")
 
+    generate_raports(args, final_sampled, outdir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
+                     test_dset, test_values_stacked, train_dset)
+
+
+def generate_raports(args, final_sampled, outdir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
+                     test_dset, test_values_stacked, train_dset):
     # If full history is specified, create a separate directory and write those files
     if args.fullhistory:
         # Write the angles
@@ -395,7 +443,6 @@ def main() -> None:
             write_preds_pdb_folder(
                 snapshot_dfs, ith_pdb_dir, basename_prefix=f"generated_{i}_timestep_"
             )
-
     # Generate histograms of sampled angles -- separate plots, and a combined plot
     # For calculating angle distributions
     multi_fig, multi_axes = plt.subplots(
@@ -444,14 +491,12 @@ def main() -> None:
         )
     multi_fig.savefig(plotdir / "dist_combined.pdf", bbox_inches="tight")
     step_multi_fig.savefig(plotdir / "cdf_combined.pdf", bbox_inches="tight")
-
     # Generate ramachandran plot for sampled angles
     plot_ramachandran(
         final_sampled_stacked[:, phi_idx],
         final_sampled_stacked[:, psi_idx],
         fname=plotdir / "ramachandran_generated.pdf",
     )
-
     # Generate plots of secondary structure co-occurrence
     make_ss_cooccurrence_plot(
         pdb_files,

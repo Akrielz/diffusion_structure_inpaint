@@ -30,18 +30,56 @@ class NERFBuilder:
     """
 
     def __init__(
-        self,
-        phi_dihedrals: np.ndarray,
-        psi_dihedrals: np.ndarray,
-        omega_dihedrals: np.ndarray,
-        bond_len_n_ca: Union[float, np.ndarray] = N_CA_LENGTH,
-        bond_len_ca_c: Union[float, np.ndarray] = CA_C_LENGTH,
-        bond_len_c_n: Union[float, np.ndarray] = C_N_LENGTH,  # 0C:1N distance
-        bond_angle_n_ca: Union[float, np.ndarray] = 121 / 180 * np.pi,
-        bond_angle_ca_c: Union[float, np.ndarray] = 109 / 180 * np.pi,  # aka tau
-        bond_angle_c_n: Union[float, np.ndarray] = 115 / 180 * np.pi,
-        init_coords: np.ndarray = [N_INIT, CA_INIT, C_INIT],
+            self,
+            phi_dihedrals: np.ndarray,
+            psi_dihedrals: np.ndarray,
+            omega_dihedrals: np.ndarray,
+            bond_len_n_ca: Union[float, np.ndarray] = N_CA_LENGTH,
+            bond_len_ca_c: Union[float, np.ndarray] = CA_C_LENGTH,
+            bond_len_c_n: Union[float, np.ndarray] = C_N_LENGTH,  # 0C:1N distance
+            bond_angle_n_ca: Union[float, np.ndarray] = 121 / 180 * np.pi,
+            bond_angle_ca_c: Union[float, np.ndarray] = 109 / 180 * np.pi,  # aka tau
+            bond_angle_c_n: Union[float, np.ndarray] = 115 / 180 * np.pi,
+            init_coords: np.ndarray = [N_INIT, CA_INIT, C_INIT],
+            already_given_coords: Optional[np.ndarray] = None,
+            to_generate_mask: Optional[np.ndarray] = None,
     ) -> None:
+
+        self.already_given_coords = already_given_coords
+        self.to_generate_mask = to_generate_mask
+
+        # If already given coords are given, recompute
+        # bond_len_n_ca, bond_angle_ca_c, bond_angle_c_n
+        if already_given_coords is not None and to_generate_mask is not None:
+            # On pos 0, 3, 6... i*3 we have N
+            # On pos 1, 4, 7... i*3+1 we have CA
+            # On pos 2, 5, 8... i*3+2 we have C
+            # We need to compute the bond lengths and angles for the next N, CA, C
+            # but only where the mask is False
+
+            n_coords = already_given_coords[::3]
+            ca_coords = already_given_coords[1::3]
+            c_coords = already_given_coords[2::3]
+
+            # get mask for the true len
+            residue_mask = 1 - to_generate_mask[:len(n_coords)]
+            residue_mask = residue_mask.astype(bool)
+
+            # Apply mask
+            n_coords = n_coords[residue_mask]
+            ca_coords = ca_coords[residue_mask]
+            c_coords = c_coords[residue_mask]
+
+            # compute bond lengths
+            bond_len_n_ca = np.linalg.norm(n_coords - ca_coords, axis=1)
+            bond_len_ca_c = np.linalg.norm(ca_coords - c_coords, axis=1)
+            bond_len_c_n = np.linalg.norm(c_coords[:-1] - n_coords[1:], axis=1)
+
+            # get the median
+            bond_len_n_ca = np.median(bond_len_n_ca)
+            bond_len_ca_c = np.median(bond_len_ca_c)
+            bond_len_c_n = np.median(bond_len_c_n)
+
         self.use_torch = False
         if any(
             [
@@ -68,6 +106,9 @@ class NERFBuilder:
             ("CA", "C"): bond_angle_ca_c,
         }
         self.init_coords = [c.squeeze() for c in init_coords]
+        if already_given_coords is not None and to_generate_mask is not None and to_generate_mask[0] == 0:
+            self.init_coords = [already_given_coords[0], already_given_coords[1], already_given_coords[2]]
+
         assert (
             len(self.init_coords) == 3
         ), f"Requires 3 initial coords for N-Ca-C but got {len(self.init_coords)}"
@@ -97,14 +138,21 @@ class NERFBuilder:
         ), f"Unexpected dih_angles shape: {dih_angles.shape}"
 
         for i in range(dih_angles.shape[0]):
-            # for i, (phi, psi, omega) in enumerate(
-            #     zip(self.phi[1:], self.psi[:-1], self.omega[:-1])
-            # ):
             dih = dih_angles[i]
+
+            if self.to_generate_mask is not None and not self.to_generate_mask[i + 1] and \
+                    self.already_given_coords is not None:
+                # We don't need to generate for this residue
+                # Note everything is for the next residue, so we need to add 1 to i
+                retval.append(self.already_given_coords[(i+1)*3].copy())
+                retval.append(self.already_given_coords[(i+1)*3+1].copy())
+                retval.append(self.already_given_coords[(i+1)*3+2].copy())
+                continue
+
             # Procedure for placing N-CA-C
             # Place the next N atom, which requires the C-N bond length/angle, and the psi dihedral
             # Place the alpha carbon, which requires the N-CA bond length/angle, and the omega dihedral
-            # Place the carbon, which requires the the CA-C bond length/angle, and the phi dihedral
+            # Place the carbon, which requires the CA-C bond length/angle, and the phi dihedral
             for j, bond in enumerate(self.bond_lengths.keys()):
                 coords = place_dihedral(
                     retval[-3],

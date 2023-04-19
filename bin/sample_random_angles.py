@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from sample import build_datasets, create_new_chain_nerf
+from sample import build_datasets, create_new_chain_nerf_to_file
 
 
 def random_angles_to_pdb(
@@ -40,7 +40,7 @@ def random_angles_to_pdb(
     angles.to_csv(angles_folder / f"{bname}.csv.gz")
 
     # Create the PDB file
-    pdb_fname = create_new_chain_nerf(str(pdb_folder / f"{bname}.pdb"), angles)
+    pdb_fname = create_new_chain_nerf_to_file(str(pdb_folder / f"{bname}.pdb"), angles)
     assert pdb_fname
 
 
