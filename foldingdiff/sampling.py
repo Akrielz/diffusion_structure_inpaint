@@ -284,6 +284,7 @@ def sample_missing_structure(
         # Get all the sampled angles together and replace info in infilled_angles
         sampled_angles_chunk = torch.stack(chunk_values)
         infilled_angles[:, left:right] = sampled_angles_chunk
+        missing_info_mask[:, left:right] = False
 
     # Trim the infilled angles to the original length
     trimmed_sampled = [

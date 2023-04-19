@@ -1,4 +1,3 @@
-import gzip
 import json
 import os
 import argparse
@@ -107,7 +106,7 @@ def read_to_correct_structure(pdb_file: str, pad_len=128) -> Dict[str, torch.Ten
         pad=pad_len,
         trim_strategy='',
         fnames=[pdb_file],
-        use_cache=True,
+        use_cache=False,
     )
     noised_dset = NoisedAnglesDataset(
         clean_dset,

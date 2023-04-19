@@ -110,14 +110,17 @@ def read_pdb_header(file_name: str) -> List[str]:
 
     body_lines = ["ATOM", "HETATM"]
 
-    stop_pointer = 0
+    stop_pointer = _search_body_lines(body_lines, source)
+
+    return source.lines[:stop_pointer]
+
+
+def _search_body_lines(body_lines, source):
     for i, line in enumerate(source.lines):
         for body_line in body_lines:
             if line.startswith(body_line):
-                stop_pointer = i
-                break
-
-    return source.lines[:stop_pointer]
+                return i
+    return 0
 
 
 def get_sequence_from_header(header: List[str]) -> Optional[Dict[str, str]]:
@@ -507,7 +510,10 @@ def add_header_info(
         atom_lines = f.readlines()
 
     new_pdb_lines = deepcopy(header)
-    new_pdb_lines[-1] += "\n"
+    for i, line in enumerate(new_pdb_lines):
+        if not line.endswith("\n"):
+            new_pdb_lines[i] = line + "\n"
+
     new_pdb_lines.extend(atom_lines)
 
     with open(out_pdb_file, "w") as f:
