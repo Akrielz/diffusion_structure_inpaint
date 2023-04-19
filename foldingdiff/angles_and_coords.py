@@ -23,6 +23,7 @@ from biotite.structure import AtomArray
 from biotite.structure.io.pdb import PDBFile
 from biotite.sequence import ProteinSequence
 
+from bin.structure_utils import gradient_descent_on_physical_constraints, write_structure_to_pdb
 from foldingdiff import nerf
 
 EXHAUSTIVE_ANGLES = ["phi", "psi", "omega", "tau", "CA:C:1N", "C:1N:1CA"]
@@ -301,7 +302,7 @@ def create_corrected_structure(
     )
 
     # Write the new structure to a PDB file
-    write_atom_array_to_pdb(new_atom_array, out_fname)
+    write_structure_to_pdb(new_atom_array, out_fname)
     return out_fname
 
 
@@ -436,14 +437,6 @@ def compute_nerf_kwargs(angles_to_set, dists_and_angles, dists_to_set, required_
         nerf_build_kwargs["to_generate_mask"] = to_generate_mask
 
     return nerf_build_kwargs
-
-
-def write_atom_array_to_pdb(atom_array: AtomArray, out_fname: str) -> str:
-    sink = PDBFile()
-    sink.set_structure(atom_array)
-    sink.write(out_fname)
-
-    return out_fname
 
 
 def write_coords_to_pdb(coords: np.ndarray, out_fname: str) -> str:

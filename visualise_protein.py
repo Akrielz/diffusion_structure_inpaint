@@ -2,26 +2,11 @@ from bin.structure_utils import read_pdb_file
 
 
 def main():
-    # fname = "pdb_to_correct/2ZJR_W.pdb"
-    # fname = "pdb_corrected/sampled_pdb/generated_1.pdb"
-    # fname = "pdb_to_correct/2ZJR_W.pdb"
-    # fname = "generated_data_now_1/sampled_pdb/generated_0.pdb"
-
-    # fname = "pdb_to_correct/generated_0.pdb"
-    # fname = "pdb_corrected/sampled_pdb/generated_0.pdb"
-    # fname = "pdb_to_correct/generated_0_long.pdb"
-
-    # fname = "pdb_to_correct/1jrh.pdb"
-
-    # fname = "pdb_to_correct/5f3b.pdb"
-    # fname = "pdb_to_correct/6e63.pdb"
-
-    # fname = "pdb_to_correct/5f3b.pdb"
-
-    # fname = "pdb_to_correct/2ZJR_W.pdb"
+    # fname = "pdb_to_correct_debug/2ZJR_W.pdb"
     # fname = "pdb_to_correct/2ZJR_W_broken.pdb"
     # fname = "pdb_to_correct/mocked.pdb"
-    fname = "pdb_corrected/best_pdb/best.pdb"
+    # fname = "pdb_corrected/best_pdb/original_best.pdb"
+    fname = "pdb_corrected/best_pdb/fine_tuned_best.pdb"
 
     source_struct = read_pdb_file(fname)
     # filter just the CA

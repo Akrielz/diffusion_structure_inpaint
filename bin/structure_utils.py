@@ -14,8 +14,6 @@ from biotite.structure import array as struct_array
 from biotite.structure.io.pdb import PDBFile
 from tqdm import tqdm
 
-from foldingdiff.angles_and_coords import write_atom_array_to_pdb
-
 d3to1 = {
     'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': 'K',
     'ILE': 'I', 'PRO': 'P', 'THR': 'T', 'PHE': 'F', 'ASN': 'N',
@@ -25,10 +23,9 @@ d3to1 = {
 
 d1to3 = {v: k for k, v in d3to1.items()}
 
-n_ca_dist = 1.46  # Check, approximately right
-ca_c_dist = 1.54  # Check, approximately right
-c_n_dist = 1.34  # Check, approximately right
-
+n_ca_dist = 1.46
+ca_c_dist = 1.54
+c_n_dist = 1.34
 
 MissingResidues = List[int]
 
@@ -74,25 +71,25 @@ def split_structure_by_chains(structure: AtomArray) -> Dict[str, AtomArray]:
     }
 
 
-def get_num_residues(structure: AtomArray) -> int:
-    return max(set(structure.res_id))
+def get_num_residues_id(structure: AtomArray) -> int:
+    return int(max(set(structure.res_id)))
 
 
-def get_lowest_residue(structure: AtomArray) -> int:
+def get_lowest_residue_id(structure: AtomArray) -> int:
     # In case of missing residues, the lowest residue is not 1
     # Also in case there are residues indexed with negative numbers
     # or with 0
-    return min(1, min(set(structure.res_id)))
+    return int(min(set(structure.res_id)))
 
 
-def iter_residues(structure: AtomArray) -> range:
-    return range(get_lowest_residue(structure), get_num_residues(structure) + 1)
+def iter_residue_ids(structure: AtomArray) -> range:
+    return range(get_lowest_residue_id(structure), get_num_residues_id(structure) + 1)
 
 
 def get_num_residues_by_chains(structure: AtomArray) -> Dict[str, int]:
     chains = get_chains(structure)
     return {
-        chain: get_num_residues(structure[structure.chain_id == chain])
+        chain: get_num_residues_id(structure[structure.chain_id == chain])
         for chain in chains
     }
 
@@ -101,7 +98,7 @@ def get_num_residues_backbone_by_chains(structure: AtomArray) -> Dict[str, int]:
     chains = get_chains(structure)
     structure = filter_only_ca(structure)
     return {
-        chain: get_num_residues(structure[structure.chain_id == chain])
+        chain: get_num_residues_id(structure[structure.chain_id == chain])
         for chain in chains
     }
 
@@ -235,7 +232,7 @@ def missing_residues_by_structure_look_residues_id(structure: AtomArray) -> Dict
         missing_residues_by_chains[chain] = []
         chain_structure = structure[structure.chain_id == chain]
 
-        for i in iter_residues(chain_structure):
+        for i in iter_residue_ids(chain_structure):
             if len(chain_structure[chain_structure.res_id == i]) == 0:
                 missing_residues_by_chains[chain].append(i)
 
@@ -272,7 +269,7 @@ def broken_residues_by_structure(structure: AtomArray):
 
         chain_structure = backbone_structure[backbone_structure.chain_id == chain]
 
-        for i in iter_residues(chain_structure):
+        for i in iter_residue_ids(chain_structure):
             backbone_residue = chain_structure[chain_structure.res_id == i]
             n_atom = backbone_residue[backbone_residue.atom_name == "N"]
             ca_atom = backbone_residue[backbone_residue.atom_name == "CA"]
@@ -359,7 +356,7 @@ def reindex_alignments(
 ):
     for chain in missing_residues_header.keys():
         chain_struct = structure[structure.chain_id == chain]
-        start_index = get_lowest_residue(chain_struct)
+        start_index = get_lowest_residue_id(chain_struct)
 
         for i, alignment in enumerate(missing_residues_header[chain]):
             indexes = np.array(alignment) + start_index - 1
@@ -422,7 +419,7 @@ def mock_missing_info(
 
     for chain in chains:
         chain_structure = structure[structure.chain_id == chain]
-        start_index = get_lowest_residue(chain_structure)
+        start_index = get_lowest_residue_id(chain_structure)
 
         for residue_id in all_residues_id[chain]:
 
@@ -480,13 +477,13 @@ def mock_missing_info(
             atom_arrays.extend(residue)
 
     new_atom_array = struct_array(atom_arrays)
-    write_atom_array_to_pdb(new_atom_array, out_pdb_file)
+    write_structure_to_pdb(new_atom_array, out_pdb_file)
 
     # add the old header to the new file
     add_header_info(header, out_pdb_file)
 
     start_indexes = {
-        chain: get_lowest_residue(structure[structure.chain_id == chain])
+        chain: get_lowest_residue_id(structure[structure.chain_id == chain])
         for chain in chains
     }
 
@@ -614,27 +611,39 @@ def compute_median_backbone_distances(structure: AtomArray):
 
 
 def backbone_loss_function(coords: torch.Tensor):
-    atom_dist = torch.norm(coords[1:] - coords[:-1], dim=1)
-    n_ca_dist_diff = (atom_dist[::3] - n_ca_dist) ** 2
-    ca_c_dist_diff = (atom_dist[1::3] - ca_c_dist) ** 2
-    c_n_dist_diff = (atom_dist[2::3] - c_n_dist) ** 2
+    # coords.shape = [batch_size, num_atoms, 3]
 
-    all_diffs = torch.cat([n_ca_dist_diff, ca_c_dist_diff, c_n_dist_diff])
+    atom_dist = torch.norm(coords[:, 1:] - coords[:, :-1], dim=2)
+    n_ca_dist_diff = (atom_dist[:, ::3] - n_ca_dist) ** 2
+    ca_c_dist_diff = (atom_dist[:, 1::3] - ca_c_dist) ** 2
+    c_n_dist_diff = (atom_dist[:, 2::3] - c_n_dist) ** 2
+
+    all_diffs = torch.cat([n_ca_dist_diff, ca_c_dist_diff, c_n_dist_diff], dim=1)
     return all_diffs.sum()
 
 
-def atom_loss_function(coords: torch.Tensor, contact_distance=1.2):
+def write_structure_to_pdb(structure: AtomArray, file_name: str) -> str:
+    sink = PDBFile()
+    sink.set_structure(structure)
+    sink.write(file_name)
+
+    return file_name
+
+
+def atom_contact_loss_function(coords: torch.Tensor, contact_distance=1.2):
+    # coords shape = [batch_size, num_atoms, 3]
+
     # Make a distance matrix
     dist_mat = torch.cdist(coords, coords)
 
     # Compute the diagonal and non-contact masks
-    diagonal_mask = torch.eye(dist_mat.shape[0], device=coords.device, dtype=torch.bool)
+    diagonal_mask = torch.eye(dist_mat.shape[1], device=coords.device, dtype=torch.bool)
     non_contacts = dist_mat > contact_distance
 
     # Inverse the distance matrix
     dist_mat = contact_distance - dist_mat
     dist_mat[non_contacts] = 0
-    dist_mat[diagonal_mask] = 0
+    dist_mat[:, diagonal_mask] = 0
 
     return dist_mat.sum()
 
@@ -645,62 +654,43 @@ def gradient_descent_on_physical_constraints(
         num_epochs: int = 1000,
         device: torch.device = torch.device("cpu"),
         stop_patience: int = 10,
+        show_progress: bool = True,
+        lr: float = 0.01,
 ):
     coords = torch.nn.Parameter(coords.to(device))
-    optimizer = torch.optim.Adam([coords], lr=0.01)
+    optimizer = torch.optim.Adam([coords], lr=lr)
     mask = mask.to(device)
 
     constant_loss = 0
-    prev_loss = 0
+    prev_loss = 0.0
 
-    progress_bar = tqdm(range(num_epochs))
+    progress_bar = tqdm(range(num_epochs), disable=not show_progress)
     for _ in progress_bar:
         optimizer.zero_grad()
         loss1 = backbone_loss_function(coords)
-        loss2 = atom_loss_function(coords)
+        loss2 = atom_contact_loss_function(coords)
 
         loss = loss1 + loss2
         loss_value = loss.detach().cpu().item()
 
-        progress_bar.set_description(f"Loss: {loss_value:.3f}")
+        progress_bar.set_description(f"Fine tuning - Loss: {loss_value:.3f}")
 
         # We want to apply the backprop only on the masked values
         loss.backward(retain_graph=True)
-        coords._grad *= mask
+        coords._grad[~mask] = 0
         optimizer.step()
 
-        if prev_loss == loss_value:
+        if abs(loss_value - prev_loss) < 1e-3:
             constant_loss += 1
+        else:
+            constant_loss = 0
 
         if constant_loss >= stop_patience:
             break
 
         prev_loss = loss_value
 
-    return coords
-
-
-def add_physical_constraints(
-        structure: AtomArray,
-        missing_residues_ids: List[int],
-        num_epochs: int = 1000,
-        device: torch.device = torch.device("cpu"),
-        stop_patience: int = 10,
-):
-    backbone_structure = structure[filter_backbone(structure)]
-    coords = backbone_structure.coord
-    coords = torch.tensor(coords, dtype=torch.float32)
-
-    mask = torch.zeros_like(coords).bool()
-    mask[[i for i in range(18, 24)]] = True
-
-    coords = gradient_descent_on_physical_constraints(
-        coords, mask, num_epochs=num_epochs, device=device, stop_patience=stop_patience
-    )
-
-    # TODO: Add the coords to the structure
-
-    return structure
+    return coords.detach()
 
 
 def main():
@@ -711,13 +701,6 @@ def main():
 
     file_name = "pdb_corrected/sampled_pdb/generated_0.pdb"
     structure = read_pdb_file(file_name)
-    structure = add_physical_constraints(
-        structure,
-        missing_residues_ids=None,
-        num_epochs=10000,
-        device=torch.device("cuda:0"),
-        stop_patience=10,
-    )
 
     print("done")
 

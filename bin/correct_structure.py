@@ -9,8 +9,7 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-from biotite.structure import AtomArray
-from biotite.structure.io.pdb import PDBFile
+from biotite.structure import filter_backbone
 
 import torch
 from huggingface_hub import snapshot_download
@@ -18,12 +17,14 @@ from torch.utils.data import DataLoader
 
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
     write_corrected_structures, generate_raports
-from bin.structure_utils import mock_missing_info, get_lowest_residue, determine_quality_of_structure, read_pdb_file
+from bin.structure_utils import mock_missing_info, determine_quality_of_structure, read_pdb_file, \
+    gradient_descent_on_physical_constraints, write_structure_to_pdb
 
 from foldingdiff import modelling
 from foldingdiff import sampling
 from foldingdiff.datasets import NoisedAnglesDataset, CathCanonicalAnglesOnlyDataset
-from foldingdiff.angles_and_coords import canonical_distances_and_dihedrals, EXHAUSTIVE_ANGLES
+from foldingdiff.angles_and_coords import canonical_distances_and_dihedrals, EXHAUSTIVE_ANGLES, \
+    combine_original_with_predicted_structure
 from foldingdiff import utils
 
 
@@ -276,9 +277,8 @@ def main():
     to_correct_mask = load_missing_info_mask(missing_residues_file, to_correct_features["attn_mask"])
 
     # Load the model
-    model_snapshot_dir = outdir / "model_snapshot"
     model = modelling.BertForDiffusionBase.from_dir(
-        args.model, copy_to=model_snapshot_dir
+        args.model
     ).to(torch.device(args.device))
 
     # Perform sampling
@@ -314,20 +314,82 @@ def main():
 
     # Write the sampled angles as pdb files
     pdb_files = write_corrected_structures(sampled_dfs, outdir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
+    device = torch.device(args.device)
+
+    # Fine tune the sampled structures
+    fine_tuned_pdb_files = fine_tune_predictions(device, outdir, pdb_files, to_correct_mask)
 
     generate_raports(args, final_sampled, outdir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
                      test_dset, test_values_stacked, train_dset)
 
     # Iterate through the generated structures and compute their quality
+    determine_best_pdb("original_best.pdb", outdir, pdb_files)
+    determine_best_pdb("fine_tuned_best.pdb", outdir, fine_tuned_pdb_files)
+
+
+def determine_best_pdb(best_name, outdir, pdb_files):
     scores = [determine_quality_of_structure(read_pdb_file(pdb_file)) for pdb_file in pdb_files]
-
-    # Get the lowest score / best structure
     best_structure = pdb_files[np.argmin(scores)]
-
-    # Write the best structure to a file
-    # Make the directory for the best
     os.makedirs(outdir / "best_pdb", exist_ok=True)
-    shutil.copy(best_structure, outdir / "best_pdb/best.pdb")
+    shutil.copy(best_structure, outdir / f"best_pdb/{best_name}")
+
+
+def fine_tune_predictions(device, outdir, pdb_files, to_correct_mask):
+    fine_tuned = []
+    os.makedirs(outdir / "fine_tuned", exist_ok=True)
+
+    all_coords = []
+    all_atom_masks = []
+    for pdb_file in pdb_files:
+        # Read the pdb file
+        structure = read_pdb_file(pdb_file)
+
+        # Get the backbone atoms
+        backbone_atoms = structure[filter_backbone(structure)]
+        coords = backbone_atoms.coord
+        coords = torch.tensor(coords, dtype=torch.float32)
+
+        # Create atom mask
+        residue_indexes = torch.where(to_correct_mask == 1)[1]
+        atom_mask = torch.zeros(coords.shape[0], dtype=torch.bool)
+        for i in residue_indexes:
+            atom_mask[3 * i:3 * i + 3] = True
+
+        all_coords.append(coords)
+        all_atom_masks.append(atom_mask)
+
+    all_coords = torch.stack(all_coords)
+    all_atom_masks = torch.stack(all_atom_masks)
+
+    all_coords = gradient_descent_on_physical_constraints(
+        coords=all_coords,
+        mask=all_atom_masks,
+        num_epochs=30000,
+        stop_patience=10,
+        show_progress=True,
+        device=device,
+    ).cpu().numpy()
+
+    for i, pdb_file in enumerate(pdb_files):
+        # Read the pdb file
+        structure = read_pdb_file(pdb_file)
+
+        coords = all_coords[i]
+
+        replaced_info_mask = to_correct_mask.cpu()[0].numpy().astype(bool)
+        new_atom_array = combine_original_with_predicted_structure(
+            original_atom_array=structure,
+            replaced_info_mask=replaced_info_mask,
+            nerf_coords=coords,
+        )
+
+        current_file_name = Path(pdb_file).name
+        out_file_name = str(outdir / "fine_tuned" / ("fine_tuned_" + current_file_name))
+
+        write_structure_to_pdb(new_atom_array, out_file_name)
+        fine_tuned.append(out_file_name)
+
+    return fine_tuned
 
 
 def download_model(args):
