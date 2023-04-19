@@ -1,14 +1,17 @@
+import biotite
+
 from bin.structure_utils import read_pdb_file
 
 
 def main():
-    # fname = "pdb_to_correct_debug/2ZJR_W.pdb"
+    # fname = "pdb_to_correct/s1/1AHW_C.pdb"
     # fname = "pdb_to_correct/2ZJR_W_broken.pdb"
     # fname = "pdb_to_correct/mocked.pdb"
     # fname = "pdb_corrected/best_pdb/original_best.pdb"
     fname = "pdb_corrected/best_pdb/fine_tuned_best.pdb"
 
     source_struct = read_pdb_file(fname)
+
     # filter just the CA
     source_struct = source_struct[source_struct.atom_name == "CA"]
 
@@ -27,10 +30,8 @@ def main():
 
     color_map = {
         0: 'green',
-        5: 'red',
-        8: 'green',
-        130: 'blue',
-        140: 'green'
+        82: 'red',
+        90: 'green',
     }
 
     # limit = 50

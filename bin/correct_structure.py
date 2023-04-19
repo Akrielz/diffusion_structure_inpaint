@@ -42,7 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to model directory, or a repo identifier on huggingface hub. Should contain training_args.json, config.json, and models folder at a minimum.",
     )
     parser.add_argument(
-        "--outdir", "-o", type=str, default=os.getcwd(), help="Path to output directory"
+        "--output_dir",
+        "-o",
+        type=str,
+        default=os.getcwd() + "/pdb_corrected",
+        help="Path to output directory"
     )
     parser.add_argument(
         "--num",
@@ -97,6 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=32,
         help="Step size for the sliding window when correcting the structure",
+    )
+    parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Force overwriting of output directory"
     )
     return parser
 
@@ -235,18 +245,12 @@ def main():
 
     assert args.pdb_to_correct != "", "Please specify a PDB file to correct"
 
-    logging.info(f"Creating {args.outdir}")
-    os.makedirs(args.outdir, exist_ok=True)
-    outdir = Path(args.outdir)
-
-    if os.listdir(outdir):
-        shutil.rmtree(outdir)
-        os.makedirs(outdir, exist_ok=True)
+    output_dir = prepare_output_dir(args)
 
     # Download the model if it was given on modelhub
     download_model(args)
 
-    plotdir = outdir / "plots"
+    plotdir = output_dir / "plots"
     os.makedirs(plotdir, exist_ok=True)
 
     # Load the dataset based on training args
@@ -263,8 +267,8 @@ def main():
     )
 
     # Mock the pdb to correct file
-    mocked_pdb_file_path = str(outdir / "mocked_pdb/mocked.pdb")
-    os.makedirs(outdir / "mocked_pdb", exist_ok=True)
+    mocked_pdb_file_path = str(output_dir / "mocked_pdb/mocked.pdb")
+    os.makedirs(output_dir / "mocked_pdb", exist_ok=True)
     mock_missing_info(args.pdb_to_correct, mocked_pdb_file_path)
     missing_residues_file = mocked_pdb_file_path + ".missing"
 
@@ -302,7 +306,7 @@ def main():
     ]
 
     # Write the raw sampled items to csv files
-    sampled_angles_folder = outdir / "sampled_angles"
+    sampled_angles_folder = output_dir / "sampled_angles"
     os.makedirs(sampled_angles_folder, exist_ok=True)
     logging.info(f"Writing sampled angles to {sampled_angles_folder}")
     for i, s in enumerate(sampled_dfs):
@@ -312,30 +316,42 @@ def main():
     to_correct_atom_array = read_pdb_file(mocked_pdb_file_path)
 
     # Write the sampled angles as pdb files
-    pdb_files = write_corrected_structures(sampled_dfs, outdir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
+    pdb_files = write_corrected_structures(sampled_dfs, output_dir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
     device = torch.device(args.device)
 
     # Fine tune the sampled structures
-    fine_tuned_pdb_files = fine_tune_predictions(device, outdir, pdb_files, to_correct_mask)
+    fine_tuned_pdb_files = fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask)
 
-    generate_raports(args, final_sampled, outdir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
+    generate_raports(args, final_sampled, output_dir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
                      test_dset, test_values_stacked, train_dset)
 
     # Iterate through the generated structures and compute their quality
-    determine_best_pdb("original_best.pdb", outdir, pdb_files)
-    determine_best_pdb("fine_tuned_best.pdb", outdir, fine_tuned_pdb_files)
+    determine_best_pdb("original_best.pdb", output_dir, pdb_files)
+    determine_best_pdb("fine_tuned_best.pdb", output_dir, fine_tuned_pdb_files)
 
 
-def determine_best_pdb(best_name, outdir, pdb_files):
+def prepare_output_dir(args):
+    output_dir = Path(args.output_dir)
+    if os.path.exists(output_dir):
+        if args.force:
+            shutil.rmtree(output_dir)
+        else:
+            raise ValueError(f"Output directory {output_dir} already exists. Use --force to overwrite")
+    logging.info(f"Creating {output_dir}")
+    os.makedirs(args.output_dir, exist_ok=True)
+    return output_dir
+
+
+def determine_best_pdb(best_name, output_dir, pdb_files):
     scores = [determine_quality_of_structure(read_pdb_file(pdb_file)) for pdb_file in pdb_files]
     best_structure = pdb_files[np.argmin(scores)]
-    os.makedirs(outdir / "best_pdb", exist_ok=True)
-    shutil.copy(best_structure, outdir / f"best_pdb/{best_name}")
+    os.makedirs(output_dir / "best_pdb", exist_ok=True)
+    shutil.copy(best_structure, output_dir / f"best_pdb/{best_name}")
 
 
-def fine_tune_predictions(device, outdir, pdb_files, to_correct_mask):
+def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
     fine_tuned = []
-    os.makedirs(outdir / "fine_tuned", exist_ok=True)
+    os.makedirs(output_dir / "fine_tuned", exist_ok=True)
 
     all_coords = []
     all_atom_masks = []
@@ -383,7 +399,7 @@ def fine_tune_predictions(device, outdir, pdb_files, to_correct_mask):
         )
 
         current_file_name = Path(pdb_file).name
-        out_file_name = str(outdir / "fine_tuned" / ("fine_tuned_" + current_file_name))
+        out_file_name = str(output_dir / "fine_tuned" / ("fine_tuned_" + current_file_name))
 
         write_structure_to_pdb(new_atom_array, out_file_name)
         fine_tuned.append(out_file_name)
