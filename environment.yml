@@ -5,10 +5,12 @@ channels:
   - pytorch
   - conda-forge
   - huggingface
+  - salilab
 dependencies:
   - python=3.8
   - pip
   - anaconda::numpy=1.22.3
+  - anaconda::scipy=1.9.1  
   - conda-forge::pandas~=1.1.5
   - pytorch::pytorch=1.12
   - huggingface::transformers=4.11.3
@@ -22,3 +24,8 @@ dependencies:
   - conda-forge::scikit-learn=1.2.1
   - bioconda::tmalign
   - conda-forge::requests
+  - conda-forge::pdbfixer
+  - conda-forge::pybind11
+  - pip:
+    - -e FASPR/ 
+  - salilab:modeller
