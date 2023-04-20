@@ -160,7 +160,8 @@ def write_corrected_structures(
     output_names = [os.path.join(output_dir, name) for name in output_names]
 
     if to_correct_mask.shape[0] != len(final_sampled):
-        to_correct_mask = to_correct_mask.reapeat(len(final_sampled), 1)
+        # repeat the mask for each prediction
+        to_correct_mask = to_correct_mask.repeat(len(final_sampled), 1)
 
     # Create the pairs of arguments
     arg_tuples = [
