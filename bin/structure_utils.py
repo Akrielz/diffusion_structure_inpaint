@@ -254,7 +254,11 @@ def missing_residues_by_structure_continuity(structure: AtomArray) -> Dict[str, 
 
         missing_residues_by_chains[chain] = []
         for start, stop in zip(start_indexes_residues, stop_indexes_residues):
-            missing_residues_by_chains[chain].extend(list(range(start+1, stop)))
+            in_between = list(range(start+1, stop))
+            if not len(in_between):
+                in_between = [start, stop]
+
+            missing_residues_by_chains[chain].extend(in_between)
 
         missing_residues_by_chains[chain] = sorted(list(set(missing_residues_by_chains[chain])))
 
@@ -307,16 +311,6 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
     missing_residues_struct_cont = missing_residues_by_structure_continuity(structure)
     broken_residues_struct = broken_residues_by_structure(structure)
 
-    # Check if the missing residues correspond
-    for chain in missing_residues_struct_res.keys():
-        if set(missing_residues_struct_cont[chain]).issubset(set(missing_residues_struct_res[chain])):
-            continue
-
-        # warning
-        print("Warning: Different subsets of missing residues found with different methods for chain", chain)
-        print("Missing residues by structure continuity:", missing_residues_struct_cont[chain])
-        print("Missing residues by structure residues id:", missing_residues_struct_res[chain])
-
     missing_residues = missing_residues_struct_res
     if missing_residues_header is not None:
 
@@ -330,15 +324,13 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
         for chain in missing_residues_header.keys():
             alignment_found = False
             for alignment in missing_residues_header[chain]:
-                if alignment_found:
-                    break
-
                 if set(missing_residues_struct_res[chain]).issubset(set(alignment)):
                     continue
 
                 # If the alignment is correct, we can use it
                 missing_residues[chain] = alignment
                 alignment_found = True
+                break
 
             # If we didn't find any alignment, we will use the first alignment from the header
             # which also has the highest score
@@ -348,6 +340,11 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
     # And now we augment the missing residues with the broken residues
     for chain in broken_residues_struct.keys():
         missing_residues[chain].extend(broken_residues_struct[chain])
+        missing_residues[chain] = sorted(list(set(missing_residues[chain])))
+
+    # And we also augment with the continuity missing residues
+    for chain in missing_residues_struct_cont.keys():
+        missing_residues[chain].extend(missing_residues_struct_cont[chain])
         missing_residues[chain] = sorted(list(set(missing_residues[chain])))
 
     return missing_residues
@@ -701,14 +698,15 @@ def gradient_descent_on_physical_constraints(
 
 def main():
     # file_name = "pdb_to_correct/2ZJR_W.pdb"
-    # file_name = "pdb_to_correct/5f3b.pdb"
-    # file_name = "pdb_to_correct/2ZJR_W_broken.pdb"
+    file_name = "pdb_to_correct_debug/5f3b.pdb"
+    # file_name = "pdb_to_correct_debug/2ZJR_W_broken.pdb"
     # file_name = "pdb_to_correct/6fp7.pdb"
 
-    file_name = "pdb_corrected/sampled_pdb/generated_0.pdb"
-    structure = read_pdb_file(file_name)
+    # file_name = "pdb_to_correct/s1/3KR3_D.pdb"
 
-    print("done")
+    x = determine_missing_residues(file_name)
+
+    print(x)
 
 
 if __name__ == "__main__":

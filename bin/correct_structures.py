@@ -13,6 +13,7 @@ from biotite.structure import filter_backbone
 import torch
 from huggingface_hub import snapshot_download
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from bin.correct_structure import prepare_output_dir, download_model
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
@@ -136,7 +137,13 @@ def main():
         os.path.join(mocked_pdb_dir, f)
         for f in pdb_file_names
     ]
-    for pdb_file_path, mocked_pdb_file_path in zip(pdb_files_path, mocked_pdb_files_path):
+
+    progress_bar = tqdm(
+        zip(pdb_files_path, mocked_pdb_files_path),
+        total=len(pdb_files_path),
+        desc="Mocking missing info"
+    )
+    for pdb_file_path, mocked_pdb_file_path in progress_bar:
         mock_missing_info(pdb_file_path, mocked_pdb_file_path)
 
 
