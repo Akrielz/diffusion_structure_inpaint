@@ -179,7 +179,7 @@ def main():
 
     infill_masks = torch.vstack([
         load_missing_info_mask(missing_residues_file, pad_len=pad_len)
-        for missing_residues_file in missing_residues_files)
+        for missing_residues_file in missing_residues_files
     ])
 
     angles = torch.vstack([
