@@ -407,9 +407,10 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
 
         original_len = original_lens[i]
 
-        coords = all_coords[i][original_len]
+        coords = all_coords[i][:original_len]
 
         replaced_info_mask = to_correct_mask.cpu()[i].numpy().astype(bool)
+        replaced_info_mask = replaced_info_mask[:original_len]
         new_atom_array = combine_original_with_predicted_structure(
             original_atom_array=structure,
             replaced_info_mask=replaced_info_mask,
