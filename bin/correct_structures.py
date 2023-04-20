@@ -95,8 +95,8 @@ def main():
     assert os.path.isdir(args.input_dir), "Provided path to PDB dir to correct is not a directory"
 
     # Prepare output dir
-    # output_dir = prepare_output_dir(args)
-    output_dir = Path(args.output_dir)
+    output_dir = prepare_output_dir(args)
+    # output_dir = Path(args.output_dir)
 
     # Prepare device
     device = torch.device(args.device)
@@ -122,20 +122,22 @@ def main():
 
     # Mock the pdb to correct files
     mocked_pdb_dir = str(output_dir / "mocked_pdb")
-    # os.makedirs(mocked_pdb_dir, exist_ok=True)
+    os.makedirs(mocked_pdb_dir, exist_ok=True)
     mocked_pdb_files_path = [
         os.path.join(mocked_pdb_dir, f)
         for f in pdb_file_names
     ]
 
-    # progress_bar = tqdm(
-    #     zip(pdb_files_path, mocked_pdb_files_path),
-    #     total=len(pdb_files_path),
-    #     desc="Mocking missing info"
-    # )
-    #
-    # for pdb_file_path, mocked_pdb_file_path in progress_bar:
-    #     mock_missing_info(pdb_file_path, mocked_pdb_file_path)
+    progress_bar = tqdm(
+        zip(pdb_files_path, mocked_pdb_files_path),
+        total=len(pdb_files_path),
+        desc="Mocking missing info"
+    )
+
+    # Make the following code multi-threaded
+
+    for pdb_file_path, mocked_pdb_file_path in progress_bar:
+        mock_missing_info(pdb_file_path, mocked_pdb_file_path)
 
     missing_residues_files = [
         mocked_pdb_file_path + ".missing"
@@ -147,6 +149,13 @@ def main():
         get_real_len_of_structure(mocked_pdb_file_path)
         for mocked_pdb_file_path in mocked_pdb_files_path
     ]
+
+    # sort the pdb files path, pdb file names and mocked files by real_lens
+    pdb_files_path = [x for _, x in sorted(zip(real_lens, pdb_files_path))]
+    pdb_file_names = [x for _, x in sorted(zip(real_lens, pdb_file_names))]
+    mocked_pdb_files_path = [x for _, x in sorted(zip(real_lens, mocked_pdb_files_path))]
+    missing_residues_files = [x for _, x in sorted(zip(real_lens, missing_residues_files))]
+    real_lens = sorted(real_lens)
 
     pad_len = compute_pad_len(
         max(real_lens),
