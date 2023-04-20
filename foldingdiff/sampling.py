@@ -99,7 +99,9 @@ def p_sample_loop_missing_info(
     not_missing_info_mask = 1 - missing_info_mask.long()
     not_missing_info_mask = not_missing_info_mask.to(torch.bool)
     not_missing_info_mask = not_missing_info_mask.to(device)
-    not_missing_info_mask = not_missing_info_mask.repeat(b, 1)
+
+    if not_missing_info_mask.shape[0] != b:
+        not_missing_info_mask = not_missing_info_mask.repeat(b, 1)
 
     # Put the noise list on the device
     noise_list = noise_list.to(device)
@@ -212,6 +214,89 @@ def p_sample_loop(
                     )
         imgs.append(img.cpu())
     return torch.stack(imgs)
+
+
+def sample_missing_structures(
+        model: nn.Module,
+        train_dset: dsets.NoisedAnglesDataset,
+        original_lengths: List[int],
+        missing_info_mask: torch.Tensor,
+        angles: torch.Tensor,
+        pad_masks: torch.Tensor,
+        batch_size: int = 512,
+        disable_pbar: bool = False,
+        window_step: int = 32,
+        window_size: int = 128,
+        whole_pad_len: int = 128,
+):
+    # Convert missing info mask to bool tensor
+    missing_info_mask = missing_info_mask.to(torch.bool)
+
+    # Get original angles
+    original_angles: torch.Tensor = angles
+    infilled_angles = original_angles.clone()
+
+    # Compute the left index of the window
+    left_indexes = torch.arange(0, whole_pad_len - window_size + 1, window_step)
+
+    for left in left_indexes:
+
+        # Compute the cropped parts
+        right = left + window_size
+        cropped_attn_mask = pad_masks[:, left:right]
+        cropped_missing_info_mask = missing_info_mask[:, left:right]
+
+        # Skip if needed
+        if cropped_missing_info_mask.sum() == 0:
+            continue
+
+        if left != left_indexes[-1] and cropped_missing_info_mask[:, :window_size // 2].sum() == 0:
+            continue
+
+        cropped_angles = infilled_angles[:, left:right]
+        cropped_real_lens = cropped_attn_mask.sum(-1)
+        cropped_real_lens = cropped_real_lens.long().tolist()
+
+        # Prepare the batches
+        lengths_batches = [
+            cropped_real_lens[i: i + batch_size] for i in range(0, len(cropped_real_lens), batch_size)
+        ]
+
+        cropped_angles_batches = [
+            cropped_angles[i: i + batch_size] for i in range(0, len(cropped_angles), batch_size)
+        ]
+
+        chunk_values = []
+        for cropped_angles_batch, lengths_batch in zip(cropped_angles_batches, lengths_batches):
+            noise_list = train_dset.sample_full_list_of_noise(cropped_angles_batch)
+
+            sampled_angles = p_sample_loop_missing_info(
+                model=model,
+                lengths=lengths_batch,
+                noise_list=noise_list,
+                timesteps=train_dset.timesteps,
+                betas=train_dset.alpha_beta_terms["betas"],
+                is_angle=train_dset.feature_is_angular["angles"],
+                disable_pbar=disable_pbar,
+                original_angles=cropped_angles_batch,
+                missing_info_mask=cropped_missing_info_mask
+            )
+            chunk_values.extend(sampled_angles[-1])
+
+        # Get all the sampled angles together and replace info in infilled_angles
+        sampled_angles_chunk = torch.stack(chunk_values)
+        infilled_angles[:, left:right] = sampled_angles_chunk
+        missing_info_mask[:, left:right] = False
+
+    # Trim the infilled angles to the original length
+    trimmed_sampled = [
+        infilled_angles[i, :original_length, :].numpy()
+        for i, original_length in enumerate(original_lengths)
+    ]
+
+    return_values = mean_shift("angles", trimmed_sampled, train_dset)
+
+    return return_values
 
 
 def sample_missing_structure(

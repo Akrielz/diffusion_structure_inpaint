@@ -12,6 +12,7 @@ from typing import *
 import numpy as np
 import pandas as pd
 import mpl_scatter_density
+from biotite.structure import AtomArray
 from matplotlib import pyplot as plt
 from astropy.visualization import LogStretch
 from astropy.visualization.mpl_normalize import ImageNormalize
@@ -133,28 +134,40 @@ def write_preds_pdb_folder(
 
 
 def write_corrected_structures(
-        final_sampled: Sequence[pd.DataFrame],
-        outdir: str,
-        to_correct_atom_array,
-        to_correct_mask,
+        final_sampled: List[pd.DataFrame],
+        output_dir: str,
+        original_atom_array: Union[AtomArray, List[AtomArray]],
+        to_correct_mask: torch.tensor,
         basename_prefix: str = "generated_",
+        output_names: Optional[List[str]] = None,
         threads: int = multiprocessing.cpu_count(),
 ):
     """
     Write the predictions as pdb files in the given folder along with information regarding the
     tm_score for each prediction. Returns the list of files written.
     """
-    os.makedirs(outdir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     logging.info(
-        f"Writing sampled angles as PDB files to {outdir} using {threads} threads"
+        f"Writing sampled angles as PDB files to {output_dir} using {threads} threads"
     )
+
+    if isinstance(original_atom_array, AtomArray):
+        original_atom_array = [original_atom_array] * len(final_sampled)
+
+    if output_names is None:
+        output_names = [f"{basename_prefix}{i}.pdb" for i in range(len(final_sampled))]
+
+    output_names = [os.path.join(output_dir, name) for name in output_names]
+
+    if to_correct_mask.shape[0] != len(final_sampled):
+        to_correct_mask = to_correct_mask.reapeat(len(final_sampled), 1)
+
     # Create the pairs of arguments
     arg_tuples = [
-        (os.path.join(outdir, f"{basename_prefix}{i}.pdb"), samp, to_correct_atom_array, to_correct_mask)
-        for i, samp in enumerate(final_sampled)
+        (output_name, samp, atom_array, mask)
+        for output_name, samp, atom_array, mask in
+        zip(output_names, final_sampled, original_atom_array, to_correct_mask)
     ]
-
-    # create_corrected_structure(*arg_tuples[0])
 
     # Write in parallel
     with multiprocessing.Pool(threads) as pool:

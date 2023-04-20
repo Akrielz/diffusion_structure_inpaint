@@ -347,6 +347,10 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
         missing_residues[chain].extend(missing_residues_struct_cont[chain])
         missing_residues[chain] = sorted(list(set(missing_residues[chain])))
 
+    # Cast the elements of the list to int
+    for chain in missing_residues.keys():
+        missing_residues[chain] = [int(x) for x in missing_residues[chain]]
+
     return missing_residues
 
 
@@ -613,13 +617,26 @@ def compute_median_backbone_distances(structure: AtomArray):
     return median_backbone_distances
 
 
-def backbone_loss_function(coords: torch.Tensor):
+def backbone_loss_function(coords: torch.Tensor, pad_mask: torch.Tensor):
     # coords.shape = [batch_size, num_atoms, 3]
+    # pad_mask.shape = [batch_size, num_atoms]
 
+    # create masks
+    atom_dist_pad_mask = pad_mask[:, 1:]
+    n_ca_dist_pad_mask = atom_dist_pad_mask[:, 0::3]
+    ca_c_dist_pad_mask = atom_dist_pad_mask[:, 1::3]
+    c_n_dist_pad_mask = atom_dist_pad_mask[:, 2::3]
+
+    # compute distances
     atom_dist = torch.norm(coords[:, 1:] - coords[:, :-1], dim=2)
-    n_ca_dist_diff = (atom_dist[:, ::3] - n_ca_dist) ** 2
+    n_ca_dist_diff = (atom_dist[:, 0::3] - n_ca_dist) ** 2
     ca_c_dist_diff = (atom_dist[:, 1::3] - ca_c_dist) ** 2
     c_n_dist_diff = (atom_dist[:, 2::3] - c_n_dist) ** 2
+
+    # apply mask
+    n_ca_dist_diff[~n_ca_dist_pad_mask] = 0
+    ca_c_dist_diff[~ca_c_dist_pad_mask] = 0
+    c_n_dist_diff[~c_n_dist_pad_mask] = 0
 
     all_diffs = torch.cat([n_ca_dist_diff, ca_c_dist_diff, c_n_dist_diff], dim=1)
     return all_diffs.sum()
@@ -633,11 +650,19 @@ def write_structure_to_pdb(structure: AtomArray, file_name: str) -> str:
     return file_name
 
 
-def atom_contact_loss_function(coords: torch.Tensor, contact_distance=1.2):
+def atom_contact_loss_function(
+        coords: torch.Tensor,
+        pad_mask: torch.Tensor,
+        contact_distance=1.2
+):
     # coords shape = [batch_size, num_atoms, 3]
+    # pad_mask shape = [batch_size, num_atoms]
 
     # Make a distance matrix
     dist_mat = torch.cdist(coords, coords)
+
+    # Extend the pad_mask to dist_mat shape
+    pad_mask_matrix = pad_mask.unsqueeze(1) * pad_mask.unsqueeze(2)
 
     # Compute the diagonal and non-contact masks
     diagonal_mask = torch.eye(dist_mat.shape[1], device=coords.device, dtype=torch.bool)
@@ -647,13 +672,15 @@ def atom_contact_loss_function(coords: torch.Tensor, contact_distance=1.2):
     dist_mat = contact_distance - dist_mat
     dist_mat[non_contacts] = 0
     dist_mat[:, diagonal_mask] = 0
+    dist_mat[~pad_mask_matrix] = 0
 
     return dist_mat.sum()
 
 
 def gradient_descent_on_physical_constraints(
         coords: torch.Tensor,
-        mask: torch.Tensor,
+        inpaint_mask: torch.Tensor,
+        pad_mask: Optional[torch.Tensor] = None,
         num_epochs: int = 1000,
         device: torch.device = torch.device("cpu"),
         stop_patience: int = 10,
@@ -662,7 +689,11 @@ def gradient_descent_on_physical_constraints(
 ):
     coords = torch.nn.Parameter(coords.to(device))
     optimizer = torch.optim.Adam([coords], lr=lr)
-    mask = mask.to(device)
+    inpaint_mask = inpaint_mask.to(device)
+
+    if pad_mask is None:
+        pad_mask = torch.ones_like(inpaint_mask)
+    pad_mask = pad_mask.to(device)
 
     constant_loss = 0
     prev_loss = 0.0
@@ -670,8 +701,8 @@ def gradient_descent_on_physical_constraints(
     progress_bar = tqdm(range(num_epochs), disable=not show_progress)
     for _ in progress_bar:
         optimizer.zero_grad()
-        loss1 = backbone_loss_function(coords)
-        loss2 = atom_contact_loss_function(coords)
+        loss1 = backbone_loss_function(coords, pad_mask)
+        loss2 = atom_contact_loss_function(coords, pad_mask)
 
         loss = loss1 + loss2
         loss_value = loss.detach().cpu().item()
@@ -680,7 +711,7 @@ def gradient_descent_on_physical_constraints(
 
         # We want to apply the backprop only on the masked values
         loss.backward(retain_graph=True)
-        coords._grad[~mask] = 0
+        coords._grad[~inpaint_mask] = 0
         optimizer.step()
 
         if abs(loss_value - prev_loss) < 1e-3:
@@ -697,16 +728,26 @@ def gradient_descent_on_physical_constraints(
 
 
 def main():
-    # file_name = "pdb_to_correct/2ZJR_W.pdb"
-    file_name = "pdb_to_correct_debug/5f3b.pdb"
-    # file_name = "pdb_to_correct_debug/2ZJR_W_broken.pdb"
-    # file_name = "pdb_to_correct/6fp7.pdb"
+    dir = "pdb_corrected/mocked_pdb"
 
-    # file_name = "pdb_to_correct/s1/3KR3_D.pdb"
+    # Get all the filenames in the directory, ending with ".missing"
+    import os
+    file_names = [f for f in os.listdir(dir) if f.endswith(".missing")]
 
-    x = determine_missing_residues(file_name)
+    # Get the missing residues for each file
+    broken_files = []
+    for file_name in file_names:
+        # Open with JSon
+        import json
+        with open(os.path.join(dir, file_name)) as f:
+            data = json.load(f)
 
-    print(x)
+        for chain in data['missing_residues_id']:
+            if len(data['missing_residues_id'][chain]) == 0:
+                broken_files.append(file_name)
+                break
+
+    print(broken_files)
 
 
 if __name__ == "__main__":

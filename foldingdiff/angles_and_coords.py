@@ -275,13 +275,13 @@ def combine_original_with_predicted_structure(
 
 
 def create_corrected_structure(
-        out_fname: str,
+        output_file: str,
         angles: pd.DataFrame,
         initial_atom_array: AtomArray,
         replaced_info_mask: torch.Tensor,
 ) -> str:
     # Convert the replaced info mask to a numpy array
-    replaced_info_mask = replaced_info_mask.cpu()[0].numpy().astype(bool)
+    replaced_info_mask = replaced_info_mask.cpu().numpy().astype(bool)
 
     # Extract the already_given_coords for the NERF model
     already_given_coords = extract_backbone_from_struct(initial_atom_array, replaced_info_mask)
@@ -302,8 +302,8 @@ def create_corrected_structure(
     )
 
     # Write the new structure to a PDB file
-    write_structure_to_pdb(new_atom_array, out_fname)
-    return out_fname
+    write_structure_to_pdb(new_atom_array, output_file)
+    return output_file
 
 
 def extract_backbone_from_struct(initial_atom_array, replaced_info_mask):

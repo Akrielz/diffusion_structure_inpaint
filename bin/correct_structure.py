@@ -12,6 +12,7 @@ from biotite.structure import filter_backbone
 
 import torch
 from huggingface_hub import snapshot_download
+from torch.nn.functional import pad
 from torch.utils.data import DataLoader
 
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
@@ -353,9 +354,12 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
     fine_tuned = []
     os.makedirs(output_dir / "fine_tuned", exist_ok=True)
 
+    if to_correct_mask.shape[0] == 1:
+        to_correct_mask = to_correct_mask.repeat(len(pdb_files), 1)
+
     all_coords = []
     all_atom_masks = []
-    for pdb_file in pdb_files:
+    for pdb_file, mask in zip(pdb_files, to_correct_mask):
         # Read the pdb file
         structure = read_pdb_file(pdb_file)
 
@@ -365,7 +369,7 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
         coords = torch.tensor(coords, dtype=torch.float32)
 
         # Create atom mask
-        residue_indexes = torch.where(to_correct_mask == 1)[1]
+        residue_indexes = torch.where(mask == 1)[0]
         atom_mask = torch.zeros(coords.shape[0], dtype=torch.bool)
         for i in residue_indexes:
             atom_mask[3 * i:3 * i + 3] = True
@@ -373,12 +377,24 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
         all_coords.append(coords)
         all_atom_masks.append(atom_mask)
 
+    original_lens = [len(c) for c in all_coords]
+    max_len = max(original_lens)
+
+    # Pad the coords and masks
+    pad_mask = [torch.zeros(max_len).bool() for _ in range(len(all_coords))]
+    for i in range(len(all_coords)):
+        all_coords[i] = pad(all_coords[i], (0, 0, 0, max_len - len(all_coords[i])))
+        all_atom_masks[i] = pad(all_atom_masks[i], (0, max_len - len(all_atom_masks[i])))
+        pad_mask[i][:original_lens[i]] = 1
+
     all_coords = torch.stack(all_coords)
     all_atom_masks = torch.stack(all_atom_masks)
+    pad_mask = torch.stack(pad_mask)
 
     all_coords = gradient_descent_on_physical_constraints(
         coords=all_coords,
-        mask=all_atom_masks,
+        inpaint_mask=all_atom_masks,
+        pad_mask=pad_mask,
         num_epochs=30000,
         stop_patience=10,
         show_progress=True,
@@ -389,7 +405,7 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
         # Read the pdb file
         structure = read_pdb_file(pdb_file)
 
-        coords = all_coords[i]
+        coords = all_coords[i][:original_lens[i]]
 
         replaced_info_mask = to_correct_mask.cpu()[0].numpy().astype(bool)
         new_atom_array = combine_original_with_predicted_structure(
@@ -399,7 +415,7 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
         )
 
         current_file_name = Path(pdb_file).name
-        out_file_name = str(output_dir / "fine_tuned" / ("fine_tuned_" + current_file_name))
+        out_file_name = str(output_dir / "fine_tuned" / current_file_name)
 
         write_structure_to_pdb(new_atom_array, out_file_name)
         fine_tuned.append(out_file_name)
