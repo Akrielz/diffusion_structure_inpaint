@@ -96,7 +96,6 @@ def main():
 
     # Prepare output dir
     output_dir = prepare_output_dir(args)
-    # output_dir = Path(args.output_dir)
 
     # Prepare device
     device = torch.device(args.device)
@@ -133,8 +132,6 @@ def main():
         total=len(pdb_files_path),
         desc="Mocking missing info"
     )
-
-    # Make the following code multi-threaded
 
     for pdb_file_path, mocked_pdb_file_path in progress_bar:
         mock_missing_info(pdb_file_path, mocked_pdb_file_path)
@@ -181,8 +178,8 @@ def main():
     ]
 
     infill_masks = torch.vstack([
-        load_missing_info_mask(missing_residues_file, features["attn_mask"])
-        for missing_residues_file, features in zip(missing_residues_files, to_correct_features)
+        load_missing_info_mask(missing_residues_file, pad_len=pad_len)
+        for missing_residues_file in missing_residues_files)
     ])
 
     angles = torch.vstack([
@@ -238,8 +235,58 @@ def main():
         output_names=pdb_file_names,
     )
 
+    # output_dir = Path(args.output_dir)
+    # missing_residues_dir = output_dir / "mocked_pdb"
+    #
+    # mocked_pdb_files_path = [
+    #     str(f)
+    #     for f in output_dir.glob("mocked_pdb/*.pdb")
+    # ]
+    #
+    # corrected_pdb_files = [
+    #     str(f)
+    #     for f in output_dir.glob("corrected_structures/*.pdb")
+    # ]
+    #
+    # # read all files ending in "*.missing"
+    # missing_residues_files = [
+    #     str(f)
+    #     for f in missing_residues_dir.glob("*.missing")
+    # ]
+    #
+    # # Sort the mocked, missing and corrected alphabetically
+    # mocked_pdb_files_path.sort()
+    # missing_residues_files.sort()
+    # corrected_pdb_files.sort()
+    #
+    # real_lens = [
+    #     get_real_len_of_structure(mocked_pdb_file_path)
+    #     for mocked_pdb_file_path in mocked_pdb_files_path
+    # ]
+    #
+    # # sort by real length
+    # mocked_pdb_files_path = [x for _, x in sorted(zip(real_lens, mocked_pdb_files_path))]
+    # missing_residues_files = [x for _, x in sorted(zip(real_lens, missing_residues_files))]
+    # corrected_pdb_files = [x for _, x in sorted(zip(real_lens, corrected_pdb_files))]
+    # real_lens = sorted(real_lens)
+    #
+    # pad_len = compute_pad_len(
+    #     max(real_lens),
+    #     args.window_size,
+    #     args.window_step
+    # )
+    #
+    # device = torch.device(args.device)
+    #
+    # infill_masks = torch.vstack([
+    #     load_missing_info_mask(missing_residues_file, pad_len=pad_len)
+    #     for missing_residues_file in missing_residues_files
+    # ])
+
     # fine tune the structures with physical constraints
-    fine_tuned_pdb_files = fine_tune_predictions(device, output_dir, corrected_pdb_files, infill_masks)
+    fine_tuned_pdb_files = fine_tune_predictions(
+        device, output_dir, corrected_pdb_files, infill_masks, batch_size=args.batch_size
+    )
 
 
 
