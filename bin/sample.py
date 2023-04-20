@@ -11,7 +11,6 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-import mpl_scatter_density
 from biotite.structure import AtomArray
 from matplotlib import pyplot as plt
 from astropy.visualization import LogStretch
@@ -20,7 +19,6 @@ from astropy.visualization.mpl_normalize import ImageNormalize
 import torch
 from huggingface_hub import snapshot_download
 
-# Import data loading code from main training script
 from train import get_train_valid_test_sets
 from annot_secondary_structures import make_ss_cooccurrence_plot
 

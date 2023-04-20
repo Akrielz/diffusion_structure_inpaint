@@ -14,6 +14,7 @@ import torch
 from huggingface_hub import snapshot_download
 from torch.nn.functional import pad
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
     write_corrected_structures, generate_raports
@@ -401,7 +402,12 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
         device=device,
     ).cpu().numpy()
 
-    for i, pdb_file in enumerate(pdb_files):
+    progress_bar = tqdm(
+        enumerate(pdb_files),
+        total=len(pdb_files),
+        desc="Writing fine tuned structures"
+    )
+    for i, pdb_file in progress_bar:
         # Read the pdb file
         structure = read_pdb_file(pdb_file)
 

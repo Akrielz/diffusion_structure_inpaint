@@ -80,13 +80,15 @@ def p_sample_loop_missing_info(
         noise_list: torch.Tensor,
         original_angles: torch.Tensor,
         missing_info_mask: torch.Tensor,
-        timesteps: int,
+        time_steps: int,
         betas: torch.Tensor,
         is_angle: List[bool],
         disable_pbar: bool = False,
+        batch_index: Optional[int] = None,
+        left_index: Optional[int] = None,
 ) -> torch.Tensor:
     """
-    Returns a tensor of shape (timesteps, batch_size, seq_len, n_ft)
+    Returns a tensor of shape (time_steps, batch_size, seq_len, n_ft)
     """
 
     # Get device
@@ -120,10 +122,16 @@ def p_sample_loop_missing_info(
 
     imgs = []
 
+    description = f"sampling loop time step"
+    if batch_index is not None:
+        description += f", b: {batch_index}"
+    if left_index is not None:
+        description += f", l: {left_index}"
+
     for t in tqdm(
-        reversed(range(0, timesteps)),
-        desc="sampling loop time step",
-        total=timesteps,
+        reversed(range(0, time_steps)),
+        desc=description,
+        total=time_steps,
         disable=disable_pbar,
     ):
         # Replace the non-missing info with the adequate angles noise
@@ -266,20 +274,32 @@ def sample_missing_structures(
             cropped_angles[i: i + batch_size] for i in range(0, len(cropped_angles), batch_size)
         ]
 
-        chunk_values = []
-        for cropped_angles_batch, lengths_batch in zip(cropped_angles_batches, lengths_batches):
-            noise_list = train_dset.sample_full_list_of_noise(cropped_angles_batch)
+        cropped_missing_info_mask_batches = [
+            cropped_missing_info_mask[i: i + batch_size] for i in range(0, len(cropped_missing_info_mask), batch_size)
+        ]
 
+        chunk_values = []
+        for b, (cropped_angles_batch, lengths_batch, cropped_mask_batch) in \
+                enumerate(zip(cropped_angles_batches, lengths_batches, cropped_missing_info_mask_batches)):
+
+            # Skip if there is nothing to do
+            if cropped_mask_batch.sum() == 0:
+                chunk_values.extend(cropped_angles_batch)
+                continue
+
+            noise_list = train_dset.sample_full_list_of_noise(cropped_angles_batch)
             sampled_angles = p_sample_loop_missing_info(
                 model=model,
                 lengths=lengths_batch,
                 noise_list=noise_list,
-                timesteps=train_dset.timesteps,
+                time_steps=train_dset.timesteps,
                 betas=train_dset.alpha_beta_terms["betas"],
                 is_angle=train_dset.feature_is_angular["angles"],
                 disable_pbar=disable_pbar,
                 original_angles=cropped_angles_batch,
-                missing_info_mask=cropped_missing_info_mask
+                missing_info_mask=cropped_mask_batch,
+                batch_index=b,
+                left_index=left,
             )
             chunk_values.extend(sampled_angles[-1])
 
@@ -357,7 +377,7 @@ def sample_missing_structure(
                 model=model,
                 lengths=lengths_batch,
                 noise_list=noise_list,
-                timesteps=train_dset.timesteps,
+                time_steps=train_dset.timesteps,
                 betas=train_dset.alpha_beta_terms["betas"],
                 is_angle=train_dset.feature_is_angular[feature_key],
                 disable_pbar=disable_pbar,

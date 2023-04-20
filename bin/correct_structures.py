@@ -1,33 +1,20 @@
-import json
 import os
 import argparse
 import logging
-import shutil
 from pathlib import Path
-from typing import *
 
-import numpy as np
 import pandas as pd
-from biotite.structure import filter_backbone
 
 import torch
-from huggingface_hub import snapshot_download
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from bin.correct_structure import prepare_output_dir, download_model, get_real_len_of_structure, compute_pad_len, \
     read_to_correct_structure, overwrite_the_angles, load_missing_info_mask, fine_tune_predictions
-from bin.sample import build_datasets, plot_ramachandran, SEED, \
-    write_corrected_structures, generate_raports
-from bin.structure_utils import mock_missing_info, determine_quality_of_structure, read_pdb_file, \
-    gradient_descent_on_physical_constraints, write_structure_to_pdb
+from bin.sample import build_datasets, SEED, \
+    write_corrected_structures
+from bin.structure_utils import mock_missing_info, read_pdb_file
 
 from foldingdiff import modelling
-from foldingdiff import sampling
-from foldingdiff.datasets import NoisedAnglesDataset, CathCanonicalAnglesOnlyDataset
-from foldingdiff.angles_and_coords import canonical_distances_and_dihedrals, EXHAUSTIVE_ANGLES, \
-    combine_original_with_predicted_structure
-from foldingdiff import utils
 from foldingdiff.sampling import sample_missing_structures
 
 
@@ -108,7 +95,8 @@ def main():
     assert os.path.isdir(args.input_dir), "Provided path to PDB dir to correct is not a directory"
 
     # Prepare output dir
-    output_dir = prepare_output_dir(args)
+    # output_dir = prepare_output_dir(args)
+    output_dir = Path(args.output_dir)
 
     # Prepare device
     device = torch.device(args.device)
@@ -134,20 +122,20 @@ def main():
 
     # Mock the pdb to correct files
     mocked_pdb_dir = str(output_dir / "mocked_pdb")
-    os.makedirs(mocked_pdb_dir, exist_ok=True)
+    # os.makedirs(mocked_pdb_dir, exist_ok=True)
     mocked_pdb_files_path = [
         os.path.join(mocked_pdb_dir, f)
         for f in pdb_file_names
     ]
 
-    progress_bar = tqdm(
-        zip(pdb_files_path, mocked_pdb_files_path),
-        total=len(pdb_files_path),
-        desc="Mocking missing info"
-    )
-
-    for pdb_file_path, mocked_pdb_file_path in progress_bar:
-        mock_missing_info(pdb_file_path, mocked_pdb_file_path)
+    # progress_bar = tqdm(
+    #     zip(pdb_files_path, mocked_pdb_files_path),
+    #     total=len(pdb_files_path),
+    #     desc="Mocking missing info"
+    # )
+    #
+    # for pdb_file_path, mocked_pdb_file_path in progress_bar:
+    #     mock_missing_info(pdb_file_path, mocked_pdb_file_path)
 
     missing_residues_files = [
         mocked_pdb_file_path + ".missing"
@@ -166,11 +154,18 @@ def main():
         args.window_step
     )
 
+    attention_masks = torch.zeros(len(pdb_files_path), pad_len)
+    for i, real_len in enumerate(real_lens):
+        attention_masks[i, :real_len] = 1
+
     to_correct_features = [
-        read_to_correct_structure(mocked_pdb_file_path, pad_len)
-        for mocked_pdb_file_path in mocked_pdb_files_path
+        {
+            "attn_mask": attention_masks[i].unsqueeze(0),
+        }
+        for i in range(len(pdb_files_path))
     ]
 
+    # Compute angles
     to_correct_features = [
         overwrite_the_angles(features, mocked_pdb_file_path, train_dset, pad_len)
         for features, mocked_pdb_file_path in zip(to_correct_features, mocked_pdb_files_path)
