@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import argparse
@@ -367,9 +368,6 @@ def fine_tune_predictions(
     all_coords = []
     all_atom_masks = []
     for pdb_file, mask in zip(pdb_files, to_correct_mask):
-        # Clean all the cuda memory
-        torch.cuda.empty_cache()
-
         # Read the pdb file
         structure = read_pdb_file(pdb_file)
 
@@ -386,6 +384,10 @@ def fine_tune_predictions(
 
         all_coords.append(coords)
         all_atom_masks.append(atom_mask)
+
+        # Free memory
+        gc.collect()
+        torch.cuda.empty_cache()
 
     original_lens = [len(c) for c in all_coords]
     max_len = max(original_lens)

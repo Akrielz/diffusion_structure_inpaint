@@ -105,14 +105,18 @@ def get_num_residues_backbone_by_chains(structure: AtomArray) -> Dict[str, int]:
 
 def read_pdb_header(file_name: str) -> List[str]:
     source = get_pdb_file_pointer(file_name)
-
-    # get all the lines until the first ATOM
-
     body_lines = ["ATOM", "HETATM"]
-
     stop_pointer = _search_body_lines(body_lines, source)
 
     return source.lines[:stop_pointer]
+
+
+def read_pdb_body(file_name: str) -> List[str]:
+    source = get_pdb_file_pointer(file_name)
+    body_lines = ["ATOM", "HETATM"]
+    start_pointer = _search_body_lines(body_lines, source)
+
+    return source.lines[start_pointer:]
 
 
 def _search_body_lines(body_lines, source):
@@ -489,22 +493,23 @@ def align_structure_to_sequence(seq: str, pdb_file: str):
     # Read structure and get sequence from it
     struct = PDBFile.read(pdb_file).get_structure(model=1)
     struct_res = [struct[struct.res_id == r].res_name[0] for r in np.unique(struct.res_id)]
-    extracted_seq_from_struct = "".join(d3to1.get(resname, '?') for res_name in struct_res)
+    extracted_seq_from_struct = "".join(d3to1.get(res_name, '?') for res_name in struct_res)
 
     # Align given sequence to structure to find gaps
     alignment = align_optimal(
-    ProteinSequence(seq),
-    ProteinSequence(extracted_seq_from_struct),
-    SubstitutionMatrix.std_protein_matrix()
+        ProteinSequence(seq),
+        ProteinSequence(extracted_seq_from_struct),
+        SubstitutionMatrix.std_protein_matrix()
     )
 
     # Find alignment that makes sense with structure's residue ids
     seq_res_map = {i: n for i, n in enumerate(np.unique(struct.res_id))}
     residue_ids = []
     for aln in alignment:
-        residue_ids = [seq_res_maps.get(i, -1) for i in aln.trace[:,-1]]
-        if check_working_alignment(residues):
+        residue_ids = [seq_res_map.get(i, -1) for i in aln.trace[:,-1]]
+        if check_working_alignment(residue_ids):
             break
+
     if residue_ids == []:
         raise Exception("Structure does not align to sequence")
     
@@ -515,6 +520,7 @@ def align_structure_to_sequence(seq: str, pdb_file: str):
     residues = [seqs[0][i] for i in gaps]
     res_id = [residue_ids[i] for i in gaps]
     return list(zip(res_id, residues))
+
 
 def mock_missing_info(
         in_pdb_file: str,
@@ -839,27 +845,89 @@ def gradient_descent_on_physical_constraints(
     return coords.detach()
 
 
+def add_sequence_to_pdb_header(
+        in_pdb_file: str,
+        sequence: str,
+        chain: Optional[str] = None,
+        out_pdb_file: Optional[str] = None
+):
+    header = read_pdb_header(in_pdb_file)
+    body = read_pdb_body(in_pdb_file)
+
+    if chain is None:
+        structure = read_pdb_file(in_pdb_file)
+        chain = get_chains(structure)[0]
+
+    # a line in the header that has sequence should look like this
+    # Example:
+    # SEQRES   4 D  109  ALA ASN TYR CYS SER GLY GLU CYS GLU PHE VAL PHE LEU
+    # General:
+    # SEQRES   <line> <chain> <num_residues> <residues> <max 13 residues per line>
+
+    # More rules for the header seqres
+    """
+     1 -  6        Record name    "SEQRES"
+     8 - 10        Integer        serNum       Serial number of the SEQRES record for  the
+                                               current  chain. Starts at 1 and increments
+                                               by one  each line. Reset to 1 for each chain.
+    12             Character      chainID      Chain identifier. This may be any single
+                                               legal  character, including a blank which is
+                                               is  used if there is only one chain.
+    14 - 17        Integer        numRes       Number of residues in the chain.
+                                               This  value is repeated on every record.
+    20 - 22        Residue name   resName      Residue name.
+    24 - 26        Residue name   resName      Residue name.
+    28 - 30        Residue name   resName      Residue name.
+    32 - 34        Residue name   resName      Residue name.
+    36 - 38        Residue name   resName      Residue name.
+    40 - 42        Residue name   resName      Residue name.
+    44 - 46        Residue name   resName      Residue name.
+    48 - 50        Residue name   resName      Residue name.
+    52 - 54        Residue name   resName      Residue name.
+    56 - 58        Residue name   resName      Residue name.
+    60 - 62        Residue name   resName      Residue name.
+    64 - 66        Residue name   resName      Residue name.
+    68 - 70        Residue name   resName      Residue name.
+    """
+
+    num_residues = len(sequence)
+    line_index = 1
+    residues_in_line = []
+    for amino_acid in sequence:
+        amino_acid_3 = d1to3[amino_acid] if amino_acid in d1to3 else "UNK"
+        residues_in_line.append(amino_acid_3)
+
+        if len(residues_in_line) == 13:
+            # DO NOT MODIFY THIS LINE
+            line = f"SEQRES {line_index:3d} {chain} {num_residues:4d}  {' '.join(residues_in_line)}"
+            line_index += 1
+            residues_in_line = []
+
+            header.append(line)
+
+    # add the last line
+    if len(residues_in_line) > 0:
+        line = f"SEQRES {line_index:3d} {chain} {num_residues:4d}  {' '.join(residues_in_line)}"
+        header.append(line)
+
+    # combine the header and the body
+    all_lines = header + body
+
+    # write the file
+    for i, line in enumerate(all_lines):
+        if not line.endswith("\n"):
+            all_lines[i] = line + "\n"
+
+    if out_pdb_file is None:
+        out_pdb_file = in_pdb_file
+
+    with open(out_pdb_file, "w") as f:
+        f.writelines(all_lines)
+
+
 def main():
-    dir = "pdb_corrected/mocked_pdb"
+    pass
 
-    # Get all the filenames in the directory, ending with ".missing"
-    import os
-    file_names = [f for f in os.listdir(dir) if f.endswith(".missing")]
-
-    # Get the missing residues for each file
-    broken_files = []
-    for file_name in file_names:
-        # Open with JSon
-        import json
-        with open(os.path.join(dir, file_name)) as f:
-            data = json.load(f)
-
-        for chain in data['missing_residues_id']:
-            if len(data['missing_residues_id'][chain]) == 0:
-                broken_files.append(file_name)
-                break
-
-    print(broken_files)
 
 
 if __name__ == "__main__":
