@@ -403,6 +403,118 @@ def get_all_residues_id(
 
     return all_residues_id
 
+from biotite.sequence import ProteinSequence
+from biotite.sequence.align import align_optimal, SubstitutionMatrix
+from biotite.structure.io.pdb import PDBFile
+
+def check_working_alignment(arr):
+    # find the first and last non-missing value in the array
+    start, end = None, None
+    for i in range(len(arr)):
+        if arr[i] != -1:
+            start = i
+            break
+    for i in range(len(arr)-1, -1, -1):
+        if arr[i] != -1:
+            end = i
+            break
+    
+    # if there are no non-missing values, the array is monotonic by default
+    if start is None or end is None:
+        return True
+    
+    # check that the missing values can be replaced with consecutive numbers
+    prev_val = arr[start]
+    num_consecutive_missing = 0
+    for i in range(start+1, end+1):
+        if arr[i] == -1:
+            num_consecutive_missing += 1
+        else:
+            # fill in the missing values with consecutive numbers
+            if num_consecutive_missing > 0:
+                if num_consecutive_missing > arr[i] - prev_val - 1:
+                    return False
+                for j in range(num_consecutive_missing):
+                    arr[i-j-1] = arr[i] - j - 1
+                num_consecutive_missing = 0
+            # check that the array is still monotonic
+            if arr[i] < prev_val:
+                return False
+            prev_val = arr[i]
+    
+    # fill in any missing values at the end of the array
+    if num_consecutive_missing > 0:
+        if num_consecutive_missing > arr[end] - prev_val:
+            return False
+        for j in range(num_consecutive_missing):
+            arr[end-j] = prev_val + j + 1
+    
+    return True
+
+
+def replace_monotonic(arr):
+    # Find the first non-negative value in the array
+    i = 0
+    while i < len(arr) and arr[i] == -1:
+        i += 1
+    
+    # If the first value is -1, backfill with consecutive integers starting from i
+    if i > 0:
+        for j in range(i-1,-1,-1):
+            arr[j] = arr[j + 1] - 1
+    
+    prev = arr[i]    
+    # Iterate over array starting from the first non-negative value
+    for j in range(i+1, len(arr)):
+        # If the element is -1, replace with consecutive integer
+        if arr[j] == -1:
+            arr[j] = prev + 1
+            
+            # Ensure that the array stays monotonic
+            if arr[j] <= arr[j-1]:
+                arr[j] = arr[j-1] + 1
+                
+            # Update variables
+            prev = arr[j]
+                
+        # If the element is not -1, update variables
+        else:
+            prev = arr[j]
+    
+    # Return modified array
+    return arr
+
+
+def align_structure_to_sequence(seq: str, pdb_file: str):
+    # Read structure and get sequence from it
+    struct = PDBFile.read(pdb_file).get_structure(model=1)
+    struct_res = [struct[struct.res_id == r].res_name[0] for r in np.unique(struct.res_id)]
+    extracted_seq_from_struct = "".join(d3to1.get(resname, '?') for res_name in struct_res)
+
+    # Align given sequence to structure to find gaps
+    alignment = align_optimal(
+    ProteinSequence(seq),
+    ProteinSequence(extracted_seq_from_struct),
+    SubstitutionMatrix.std_protein_matrix()
+    )
+
+    # Find alignment that makes sense with structure's residue ids
+    seq_res_map = {i: n for i, n in enumerate(np.unique(struct.res_id))}
+    residue_ids = []
+    for aln in alignment:
+        residue_ids = [seq_res_maps.get(i, -1) for i in aln.trace[:,-1]]
+        if check_working_alignment(residues):
+            break
+    if residue_ids == []:
+        raise Exception("Structure does not align to sequence")
+    
+    # Return residue ids and names of gaps to fill
+    residue_ids = replace_monotonic(residue_ids)
+    seqs = aln.get_gapped_sequences()
+    gaps = [i for i,c in enumerate(seqs[1]) if c == '-']
+    residues = [seqs[0][i] for i in gaps]
+    res_id = [residue_ids[i] for i in gaps]
+    return list(zip(res_id, residues))
 
 def mock_missing_info(
         in_pdb_file: str,
