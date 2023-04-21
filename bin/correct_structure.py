@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import argparse
@@ -19,7 +20,7 @@ from tqdm import tqdm
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
     write_corrected_structures, generate_raports
 from bin.structure_utils import mock_missing_info, determine_quality_of_structure, read_pdb_file, \
-    gradient_descent_on_physical_constraints, write_structure_to_pdb
+    gradient_descent_on_physical_constraints, write_structure_to_pdb, mock_missing_info_by_alignment
 
 from foldingdiff import modelling
 from foldingdiff import sampling
@@ -162,6 +163,11 @@ def overwrite_the_angles(
 ):
     # Read the angles
     angles = compute_angles_from_pdb(pdb_file)
+
+    if angles is None:
+        print("Could not compute angles from the structure")
+        raise ValueError
+
     angles = angles.to_numpy()
     angles = torch.from_numpy(angles)
     angles = angles.unsqueeze(0)
@@ -217,11 +223,18 @@ def load_missing_info_mask(
     # Extract the missing_residues_id
     missing_residues_id = missing_info_mask["missing_residues_id"]
     start_indexes = missing_info_mask["start_indexes"]
+    index_mapping = missing_info_mask["index_mapping"]
 
+    # real_residues_id_to_standard = {
+    #     chain: {}
+    #     for chain in missing_residues_id.keys()
+    # }
     chains = list(missing_residues_id.keys())
     for chain in chains:
-        start_index = start_indexes[chain]
-        missing_residues_id[chain] = [i - start_index for i in missing_residues_id[chain]]
+        missing_residues_id[chain] = [
+            index_mapping[chain][f"{i}"]
+            for i in missing_residues_id[chain]
+        ]
 
     # Create the mask
     mask = torch.zeros([1, pad_len])
@@ -271,7 +284,7 @@ def main():
     # Mock the pdb to correct file
     mocked_pdb_file_path = str(output_dir / "mocked_pdb/mocked.pdb")
     os.makedirs(output_dir / "mocked_pdb", exist_ok=True)
-    mock_missing_info(args.pdb_to_correct, mocked_pdb_file_path)
+    mock_missing_info_by_alignment(args.pdb_to_correct, mocked_pdb_file_path)
     missing_residues_file = mocked_pdb_file_path + ".missing"
 
     # Load the structure to correct
@@ -367,9 +380,6 @@ def fine_tune_predictions(
     all_coords = []
     all_atom_masks = []
     for pdb_file, mask in zip(pdb_files, to_correct_mask):
-        # Clean all the cuda memory
-        torch.cuda.empty_cache()
-
         # Read the pdb file
         structure = read_pdb_file(pdb_file)
 
@@ -386,6 +396,10 @@ def fine_tune_predictions(
 
         all_coords.append(coords)
         all_atom_masks.append(atom_mask)
+
+        # Free memory
+        gc.collect()
+        torch.cuda.empty_cache()
 
     original_lens = [len(c) for c in all_coords]
     max_len = max(original_lens)
