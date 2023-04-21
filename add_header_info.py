@@ -8,13 +8,13 @@ from bin.structure_utils import add_sequence_to_pdb_header
 
 
 def main():
-    in_dir_name = "pdb_to_correct/s2"
-    out_dir_name = "pdb_to_correct/s2_header"
+    in_dir_name = "pdb_to_correct/s1"
+    out_dir_name = "pdb_to_correct/s1_header"
 
     # Make the output directory
     Path(out_dir_name).mkdir(parents=True, exist_ok=True)
 
-    csv_file = "pdb_to_correct_debug/seqs_2.csv"
+    csv_file = "pdb_to_correct_debug/seqs_1.csv"
     df = pd.read_csv(csv_file)
 
     print(df.columns)
@@ -33,11 +33,11 @@ def main():
         # Take the line in the csv file that matches the pdb file
         pdb_file_df = df.loc[
             (df["pdbid"] == pdb_file_id) &
-            (df["interactor_2"] == pdb_file_chain)
+            (df["interactor_1"] == pdb_file_chain)
         ]
 
         # Take the sequence
-        sequence = pdb_file_df["interactor_2 sequence"].values[0]
+        sequence = pdb_file_df["interactor_1 sequence"].values[0]
 
         # Compute thew new file_path
         new_file_path = str(Path(out_dir_name) / f"{pdb_file_name}.pdb")
