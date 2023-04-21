@@ -254,7 +254,11 @@ def missing_residues_by_structure_continuity(structure: AtomArray) -> Dict[str, 
 
         missing_residues_by_chains[chain] = []
         for start, stop in zip(start_indexes_residues, stop_indexes_residues):
-            missing_residues_by_chains[chain].extend(list(range(start+1, stop)))
+            in_between = list(range(start+1, stop))
+            if not len(in_between):
+                in_between = [start, stop]
+
+            missing_residues_by_chains[chain].extend(in_between)
 
         missing_residues_by_chains[chain] = sorted(list(set(missing_residues_by_chains[chain])))
 
@@ -307,16 +311,6 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
     missing_residues_struct_cont = missing_residues_by_structure_continuity(structure)
     broken_residues_struct = broken_residues_by_structure(structure)
 
-    # Check if the missing residues correspond
-    for chain in missing_residues_struct_res.keys():
-        if set(missing_residues_struct_cont[chain]).issubset(set(missing_residues_struct_res[chain])):
-            continue
-
-        # warning
-        print("Warning: Different subsets of missing residues found with different methods for chain", chain)
-        print("Missing residues by structure continuity:", missing_residues_struct_cont[chain])
-        print("Missing residues by structure residues id:", missing_residues_struct_res[chain])
-
     missing_residues = missing_residues_struct_res
     if missing_residues_header is not None:
 
@@ -330,15 +324,13 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
         for chain in missing_residues_header.keys():
             alignment_found = False
             for alignment in missing_residues_header[chain]:
-                if alignment_found:
-                    break
-
                 if set(missing_residues_struct_res[chain]).issubset(set(alignment)):
                     continue
 
                 # If the alignment is correct, we can use it
                 missing_residues[chain] = alignment
                 alignment_found = True
+                break
 
             # If we didn't find any alignment, we will use the first alignment from the header
             # which also has the highest score
@@ -349,6 +341,15 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
     for chain in broken_residues_struct.keys():
         missing_residues[chain].extend(broken_residues_struct[chain])
         missing_residues[chain] = sorted(list(set(missing_residues[chain])))
+
+    # And we also augment with the continuity missing residues
+    for chain in missing_residues_struct_cont.keys():
+        missing_residues[chain].extend(missing_residues_struct_cont[chain])
+        missing_residues[chain] = sorted(list(set(missing_residues[chain])))
+
+    # Cast the elements of the list to int
+    for chain in missing_residues.keys():
+        missing_residues[chain] = [int(x) for x in missing_residues[chain]]
 
     return missing_residues
 
@@ -402,6 +403,118 @@ def get_all_residues_id(
 
     return all_residues_id
 
+from biotite.sequence import ProteinSequence
+from biotite.sequence.align import align_optimal, SubstitutionMatrix
+from biotite.structure.io.pdb import PDBFile
+
+def check_working_alignment(arr):
+    # find the first and last non-missing value in the array
+    start, end = None, None
+    for i in range(len(arr)):
+        if arr[i] != -1:
+            start = i
+            break
+    for i in range(len(arr)-1, -1, -1):
+        if arr[i] != -1:
+            end = i
+            break
+    
+    # if there are no non-missing values, the array is monotonic by default
+    if start is None or end is None:
+        return True
+    
+    # check that the missing values can be replaced with consecutive numbers
+    prev_val = arr[start]
+    num_consecutive_missing = 0
+    for i in range(start+1, end+1):
+        if arr[i] == -1:
+            num_consecutive_missing += 1
+        else:
+            # fill in the missing values with consecutive numbers
+            if num_consecutive_missing > 0:
+                if num_consecutive_missing > arr[i] - prev_val - 1:
+                    return False
+                for j in range(num_consecutive_missing):
+                    arr[i-j-1] = arr[i] - j - 1
+                num_consecutive_missing = 0
+            # check that the array is still monotonic
+            if arr[i] < prev_val:
+                return False
+            prev_val = arr[i]
+    
+    # fill in any missing values at the end of the array
+    if num_consecutive_missing > 0:
+        if num_consecutive_missing > arr[end] - prev_val:
+            return False
+        for j in range(num_consecutive_missing):
+            arr[end-j] = prev_val + j + 1
+    
+    return True
+
+
+def replace_monotonic(arr):
+    # Find the first non-negative value in the array
+    i = 0
+    while i < len(arr) and arr[i] == -1:
+        i += 1
+    
+    # If the first value is -1, backfill with consecutive integers starting from i
+    if i > 0:
+        for j in range(i-1,-1,-1):
+            arr[j] = arr[j + 1] - 1
+    
+    prev = arr[i]    
+    # Iterate over array starting from the first non-negative value
+    for j in range(i+1, len(arr)):
+        # If the element is -1, replace with consecutive integer
+        if arr[j] == -1:
+            arr[j] = prev + 1
+            
+            # Ensure that the array stays monotonic
+            if arr[j] <= arr[j-1]:
+                arr[j] = arr[j-1] + 1
+                
+            # Update variables
+            prev = arr[j]
+                
+        # If the element is not -1, update variables
+        else:
+            prev = arr[j]
+    
+    # Return modified array
+    return arr
+
+
+def align_structure_to_sequence(seq: str, pdb_file: str):
+    # Read structure and get sequence from it
+    struct = PDBFile.read(pdb_file).get_structure(model=1)
+    struct_res = [struct[struct.res_id == r].res_name[0] for r in np.unique(struct.res_id)]
+    extracted_seq_from_struct = "".join(d3to1.get(resname, '?') for res_name in struct_res)
+
+    # Align given sequence to structure to find gaps
+    alignment = align_optimal(
+    ProteinSequence(seq),
+    ProteinSequence(extracted_seq_from_struct),
+    SubstitutionMatrix.std_protein_matrix()
+    )
+
+    # Find alignment that makes sense with structure's residue ids
+    seq_res_map = {i: n for i, n in enumerate(np.unique(struct.res_id))}
+    residue_ids = []
+    for aln in alignment:
+        residue_ids = [seq_res_maps.get(i, -1) for i in aln.trace[:,-1]]
+        if check_working_alignment(residues):
+            break
+    if residue_ids == []:
+        raise Exception("Structure does not align to sequence")
+    
+    # Return residue ids and names of gaps to fill
+    residue_ids = replace_monotonic(residue_ids)
+    seqs = aln.get_gapped_sequences()
+    gaps = [i for i,c in enumerate(seqs[1]) if c == '-']
+    residues = [seqs[0][i] for i in gaps]
+    res_id = [residue_ids[i] for i in gaps]
+    return list(zip(res_id, residues))
 
 def mock_missing_info(
         in_pdb_file: str,
@@ -616,13 +729,26 @@ def compute_median_backbone_distances(structure: AtomArray):
     return median_backbone_distances
 
 
-def backbone_loss_function(coords: torch.Tensor):
+def backbone_loss_function(coords: torch.Tensor, pad_mask: torch.Tensor):
     # coords.shape = [batch_size, num_atoms, 3]
+    # pad_mask.shape = [batch_size, num_atoms]
 
+    # create masks
+    atom_dist_pad_mask = pad_mask[:, 1:]
+    n_ca_dist_pad_mask = atom_dist_pad_mask[:, 0::3]
+    ca_c_dist_pad_mask = atom_dist_pad_mask[:, 1::3]
+    c_n_dist_pad_mask = atom_dist_pad_mask[:, 2::3]
+
+    # compute distances
     atom_dist = torch.norm(coords[:, 1:] - coords[:, :-1], dim=2)
-    n_ca_dist_diff = (atom_dist[:, ::3] - n_ca_dist) ** 2
+    n_ca_dist_diff = (atom_dist[:, 0::3] - n_ca_dist) ** 2
     ca_c_dist_diff = (atom_dist[:, 1::3] - ca_c_dist) ** 2
     c_n_dist_diff = (atom_dist[:, 2::3] - c_n_dist) ** 2
+
+    # apply mask
+    n_ca_dist_diff[~n_ca_dist_pad_mask] = 0
+    ca_c_dist_diff[~ca_c_dist_pad_mask] = 0
+    c_n_dist_diff[~c_n_dist_pad_mask] = 0
 
     all_diffs = torch.cat([n_ca_dist_diff, ca_c_dist_diff, c_n_dist_diff], dim=1)
     return all_diffs.sum()
@@ -636,11 +762,19 @@ def write_structure_to_pdb(structure: AtomArray, file_name: str) -> str:
     return file_name
 
 
-def atom_contact_loss_function(coords: torch.Tensor, contact_distance=1.2):
+def atom_contact_loss_function(
+        coords: torch.Tensor,
+        pad_mask: torch.Tensor,
+        contact_distance=1.2
+):
     # coords shape = [batch_size, num_atoms, 3]
+    # pad_mask shape = [batch_size, num_atoms]
 
     # Make a distance matrix
     dist_mat = torch.cdist(coords, coords)
+
+    # Extend the pad_mask to dist_mat shape
+    pad_mask_matrix = pad_mask.unsqueeze(1) * pad_mask.unsqueeze(2)
 
     # Compute the diagonal and non-contact masks
     diagonal_mask = torch.eye(dist_mat.shape[1], device=coords.device, dtype=torch.bool)
@@ -650,13 +784,15 @@ def atom_contact_loss_function(coords: torch.Tensor, contact_distance=1.2):
     dist_mat = contact_distance - dist_mat
     dist_mat[non_contacts] = 0
     dist_mat[:, diagonal_mask] = 0
+    dist_mat[~pad_mask_matrix] = 0
 
     return dist_mat.sum()
 
 
 def gradient_descent_on_physical_constraints(
         coords: torch.Tensor,
-        mask: torch.Tensor,
+        inpaint_mask: torch.Tensor,
+        pad_mask: Optional[torch.Tensor] = None,
         num_epochs: int = 1000,
         device: torch.device = torch.device("cpu"),
         stop_patience: int = 10,
@@ -665,7 +801,11 @@ def gradient_descent_on_physical_constraints(
 ):
     coords = torch.nn.Parameter(coords.to(device))
     optimizer = torch.optim.Adam([coords], lr=lr)
-    mask = mask.to(device)
+    inpaint_mask = inpaint_mask.to(device)
+
+    if pad_mask is None:
+        pad_mask = torch.ones_like(inpaint_mask)
+    pad_mask = pad_mask.to(device)
 
     constant_loss = 0
     prev_loss = 0.0
@@ -673,8 +813,8 @@ def gradient_descent_on_physical_constraints(
     progress_bar = tqdm(range(num_epochs), disable=not show_progress)
     for _ in progress_bar:
         optimizer.zero_grad()
-        loss1 = backbone_loss_function(coords)
-        loss2 = atom_contact_loss_function(coords)
+        loss1 = backbone_loss_function(coords, pad_mask)
+        loss2 = atom_contact_loss_function(coords, pad_mask)
 
         loss = loss1 + loss2
         loss_value = loss.detach().cpu().item()
@@ -683,7 +823,7 @@ def gradient_descent_on_physical_constraints(
 
         # We want to apply the backprop only on the masked values
         loss.backward(retain_graph=True)
-        coords._grad[~mask] = 0
+        coords._grad[~inpaint_mask] = 0
         optimizer.step()
 
         if abs(loss_value - prev_loss) < 1e-3:
@@ -700,15 +840,26 @@ def gradient_descent_on_physical_constraints(
 
 
 def main():
-    # file_name = "pdb_to_correct/2ZJR_W.pdb"
-    # file_name = "pdb_to_correct/5f3b.pdb"
-    # file_name = "pdb_to_correct/2ZJR_W_broken.pdb"
-    # file_name = "pdb_to_correct/6fp7.pdb"
+    dir = "pdb_corrected/mocked_pdb"
 
-    file_name = "pdb_corrected/sampled_pdb/generated_0.pdb"
-    structure = read_pdb_file(file_name)
+    # Get all the filenames in the directory, ending with ".missing"
+    import os
+    file_names = [f for f in os.listdir(dir) if f.endswith(".missing")]
 
-    print("done")
+    # Get the missing residues for each file
+    broken_files = []
+    for file_name in file_names:
+        # Open with JSon
+        import json
+        with open(os.path.join(dir, file_name)) as f:
+            data = json.load(f)
+
+        for chain in data['missing_residues_id']:
+            if len(data['missing_residues_id'][chain]) == 0:
+                broken_files.append(file_name)
+                break
+
+    print(broken_files)
 
 
 if __name__ == "__main__":

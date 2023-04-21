@@ -12,7 +12,9 @@ from biotite.structure import filter_backbone
 
 import torch
 from huggingface_hub import snapshot_download
+from torch.nn.functional import pad
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
     write_corrected_structures, generate_raports
@@ -205,7 +207,7 @@ def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> 
 
 def load_missing_info_mask(
         missing_info_mask_file: str,
-        attention_mask: torch.Tensor
+        pad_len: int
 ) -> torch.Tensor:
 
     # Load the json file
@@ -222,7 +224,7 @@ def load_missing_info_mask(
         missing_residues_id[chain] = [i - start_index for i in missing_residues_id[chain]]
 
     # Create the mask
-    mask = torch.zeros_like(attention_mask)
+    mask = torch.zeros([1, pad_len])
     for chain in chains:
         mask[:, missing_residues_id[chain]] = 1
 
@@ -349,13 +351,25 @@ def determine_best_pdb(best_name, output_dir, pdb_files):
     shutil.copy(best_structure, output_dir / f"best_pdb/{best_name}")
 
 
-def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
+def fine_tune_predictions(
+        device,
+        output_dir,
+        pdb_files,
+        to_correct_mask,
+        batch_size: int = 16,
+):
     fine_tuned = []
     os.makedirs(output_dir / "fine_tuned", exist_ok=True)
 
+    if to_correct_mask.shape[0] == 1:
+        to_correct_mask = to_correct_mask.repeat(len(pdb_files), 1)
+
     all_coords = []
     all_atom_masks = []
-    for pdb_file in pdb_files:
+    for pdb_file, mask in zip(pdb_files, to_correct_mask):
+        # Clean all the cuda memory
+        torch.cuda.empty_cache()
+
         # Read the pdb file
         structure = read_pdb_file(pdb_file)
 
@@ -365,7 +379,7 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
         coords = torch.tensor(coords, dtype=torch.float32)
 
         # Create atom mask
-        residue_indexes = torch.where(to_correct_mask == 1)[1]
+        residue_indexes = torch.where(mask == 1)[0]
         atom_mask = torch.zeros(coords.shape[0], dtype=torch.bool)
         for i in residue_indexes:
             atom_mask[3 * i:3 * i + 3] = True
@@ -373,25 +387,73 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
         all_coords.append(coords)
         all_atom_masks.append(atom_mask)
 
+    original_lens = [len(c) for c in all_coords]
+    max_len = max(original_lens)
+
+    # Pad the coords and masks
+    pad_mask = [torch.zeros(max_len).bool() for _ in range(len(all_coords))]
+    for i in range(len(all_coords)):
+        all_coords[i] = pad(all_coords[i], (0, 0, 0, max_len - len(all_coords[i])))
+        all_atom_masks[i] = pad(all_atom_masks[i], (0, max_len - len(all_atom_masks[i])))
+        pad_mask[i][:original_lens[i]] = 1
+
     all_coords = torch.stack(all_coords)
     all_atom_masks = torch.stack(all_atom_masks)
+    pad_mask = torch.stack(pad_mask)
 
-    all_coords = gradient_descent_on_physical_constraints(
-        coords=all_coords,
-        mask=all_atom_masks,
-        num_epochs=30000,
-        stop_patience=10,
-        show_progress=True,
-        device=device,
-    ).cpu().numpy()
+    all_coords_batched = [
+        all_coords[i:i + batch_size] for i in range(0, len(all_coords), batch_size)
+    ]
+    all_atom_masks_batched = [
+        all_atom_masks[i:i + batch_size] for i in range(0, len(all_atom_masks), batch_size)
+    ]
+    pad_mask_batched = [
+        pad_mask[i:i + batch_size] for i in range(0, len(pad_mask), batch_size)
+    ]
+    original_lens_batched = [
+        original_lens[i:i + batch_size] for i in range(0, len(original_lens), batch_size)
+    ]
 
-    for i, pdb_file in enumerate(pdb_files):
+    all_coords_updated = []
+    for coords, atom_masks, mask, orig_len in \
+            zip(all_coords_batched, all_atom_masks_batched, pad_mask_batched, original_lens_batched):
+
+        crop_len = max(orig_len)
+
+        coords_cropped = coords[:, :crop_len]
+        atom_masks_cropped = atom_masks[:, :crop_len]
+        mask_cropped = mask[:, :crop_len]
+
+        sampled_coords = gradient_descent_on_physical_constraints(
+            coords=coords_cropped,
+            inpaint_mask=atom_masks_cropped,
+            pad_mask=mask_cropped,
+            num_epochs=30000,
+            stop_patience=10,
+            show_progress=True,
+            device=device,
+        ).cpu().numpy()
+
+        coords[:, :crop_len] = torch.tensor(sampled_coords)
+        all_coords_updated.append(coords.numpy())
+
+    all_coords_updated = np.concatenate(all_coords_updated)
+
+    progress_bar = tqdm(
+        enumerate(pdb_files),
+        total=len(pdb_files),
+        desc="Writing fine tuned structures"
+    )
+    for i, pdb_file in progress_bar:
         # Read the pdb file
         structure = read_pdb_file(pdb_file)
 
-        coords = all_coords[i]
+        original_len = original_lens[i]
 
-        replaced_info_mask = to_correct_mask.cpu()[0].numpy().astype(bool)
+        coords = all_coords_updated[i][:original_len]
+
+        replaced_info_mask = to_correct_mask.cpu()[i].numpy().astype(bool)
+        replaced_info_mask = replaced_info_mask[:original_len]
         new_atom_array = combine_original_with_predicted_structure(
             original_atom_array=structure,
             replaced_info_mask=replaced_info_mask,
@@ -399,7 +461,7 @@ def fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask):
         )
 
         current_file_name = Path(pdb_file).name
-        out_file_name = str(output_dir / "fine_tuned" / ("fine_tuned_" + current_file_name))
+        out_file_name = str(output_dir / "fine_tuned" / current_file_name)
 
         write_structure_to_pdb(new_atom_array, out_file_name)
         fine_tuned.append(out_file_name)
