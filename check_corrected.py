@@ -7,7 +7,7 @@ from bin.structure_utils import read_pdb_file
 
 
 def main():
-    dir_name = "pdb_corrected_s1/fine_tuned"
+    dir_name = "pdb_corrected_s1_header/fine_tuned"
     pdb_files = [
         str(f)
         for f in Path(dir_name).glob("*.pdb")

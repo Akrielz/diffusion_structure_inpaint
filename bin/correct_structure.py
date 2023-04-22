@@ -9,7 +9,6 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-from biotite.structure import filter_backbone
 
 import torch
 from huggingface_hub import snapshot_download
@@ -19,8 +18,9 @@ from tqdm import tqdm
 
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
     write_corrected_structures, generate_raports
-from bin.structure_utils import mock_missing_info, determine_quality_of_structure, read_pdb_file, \
-    gradient_descent_on_physical_constraints, write_structure_to_pdb, mock_missing_info_by_alignment
+from bin.structure_utils import determine_quality_of_structure, read_pdb_file, \
+    gradient_descent_on_physical_constraints, write_structure_to_pdb, mock_missing_info_by_alignment, filter_backbone
+
 
 from foldingdiff import modelling
 from foldingdiff import sampling
@@ -222,17 +222,12 @@ def load_missing_info_mask(
 
     # Extract the missing_residues_id
     missing_residues_id = missing_info_mask["missing_residues_id"]
-    start_indexes = missing_info_mask["start_indexes"]
     index_mapping = missing_info_mask["index_mapping"]
 
-    # real_residues_id_to_standard = {
-    #     chain: {}
-    #     for chain in missing_residues_id.keys()
-    # }
     chains = list(missing_residues_id.keys())
     for chain in chains:
         missing_residues_id[chain] = [
-            index_mapping[chain][f"{i}"]
+            index_mapping[chain][f"{i}"] - 1  # The reindex is starting from 1
             for i in missing_residues_id[chain]
         ]
 
@@ -438,15 +433,20 @@ def fine_tune_predictions(
         atom_masks_cropped = atom_masks[:, :crop_len]
         mask_cropped = mask[:, :crop_len]
 
-        sampled_coords = gradient_descent_on_physical_constraints(
-            coords=coords_cropped,
-            inpaint_mask=atom_masks_cropped,
-            pad_mask=mask_cropped,
-            num_epochs=30000,
-            stop_patience=10,
-            show_progress=True,
-            device=device,
-        ).cpu().numpy()
+        sampled_coords = coords_cropped
+        for lr in [0.1, 0.01, 0.001]:
+            sampled_coords = gradient_descent_on_physical_constraints(
+                coords=sampled_coords,
+                inpaint_mask=atom_masks_cropped,
+                pad_mask=mask_cropped,
+                num_epochs=10000,
+                stop_patience=300,
+                show_progress=True,
+                device=device,
+                lr=lr,
+            )
+
+        sampled_coords = sampled_coords.cpu().numpy()
 
         coords[:, :crop_len] = torch.tensor(sampled_coords)
         all_coords_updated.append(coords.numpy())
@@ -459,6 +459,7 @@ def fine_tune_predictions(
         desc="Writing fine tuned structures"
     )
     for i, pdb_file in progress_bar:
+
         # Read the pdb file
         structure = read_pdb_file(pdb_file)
 

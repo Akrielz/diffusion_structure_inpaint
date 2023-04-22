@@ -1,7 +1,6 @@
 import gzip
 import json
 from collections import defaultdict
-from copy import deepcopy
 from typing import Optional, List, Dict, Any
 
 import biotite
@@ -9,7 +8,7 @@ import numpy as np
 import torch
 from Bio import Align
 from Bio.pairwise2 import Alignment
-from biotite.structure import AtomArray, filter_backbone, Atom
+from biotite.structure import AtomArray, Atom, residue_iter
 from biotite.structure import array as struct_array
 from biotite.structure.io.pdb import PDBFile
 from tqdm import tqdm
@@ -205,6 +204,21 @@ ca_c_dist = 1.54
 c_n_dist = 1.34
 
 MissingResidues = List[int]
+
+_ext_aa_list = ["ALA","ARG","ASN","ASP","CYS","GLN","GLU","GLY","HIS","ILE",
+                "LEU","LYS","MET","PHE","PRO","SER","THR","TRP","TYR","VAL",
+                "MSE", "ASX", "GLX", "SEC", "UNK"]
+
+
+def filter_amino_acids(array):
+    return np.in1d(array.res_name, _ext_aa_list)
+
+
+def filter_backbone(array: AtomArray):
+    return ( ((array.atom_name == "N") |
+              (array.atom_name == "CA") |
+              (array.atom_name == "C")) &
+              filter_amino_acids(array) )
 
 
 def order_keys_in_dict(d: Dict[str, Any]) -> Dict[str, Any]:
@@ -1002,6 +1016,7 @@ def gradient_descent_on_physical_constraints(
 
     constant_loss = 0
     prev_loss = 0.0
+    min_loss = 1e10
 
     progress_bar = tqdm(range(num_epochs), disable=not show_progress)
     for _ in progress_bar:
@@ -1021,6 +1036,8 @@ def gradient_descent_on_physical_constraints(
 
         if abs(loss_value - prev_loss) < 1e-3:
             constant_loss += 1
+        elif loss_value > min_loss:
+            constant_loss += 1
         else:
             constant_loss = 0
 
@@ -1028,6 +1045,7 @@ def gradient_descent_on_physical_constraints(
             break
 
         prev_loss = loss_value
+        min_loss = min(min_loss, loss_value)
 
     return coords.detach()
 
@@ -1209,11 +1227,11 @@ def mock_missing_info_by_alignment(
     missing_residues_id[chain] = sorted(list(set(missing_residues_id[chain])))
     missing_residues_id[chain] = [int(res_id) for res_id in missing_residues_id[chain]]
 
-    # Compute mapping from real res_ids to standard [0, 1, 2, ...]
+    # Compute mapping from real res_ids to standard [1, 2, ...]
     mapping = {chain: {}}
     for i, res_id in enumerate(all_ids):
         res_id = int(res_id)
-        mapping[chain][res_id] = i
+        mapping[chain][res_id] = i + 1
 
     missing_info = {
         "missing_residues_id": missing_residues_id,
@@ -1228,10 +1246,46 @@ def mock_missing_info_by_alignment(
     return new_atom_array
 
 
+def reindex_pdb_file(
+        in_pdb_file: str,
+        out_pdb_file: str,
+        index_mapping: Dict[str, Dict[int, int]],
+):
+    structure = read_pdb_file(in_pdb_file)
+    chains = get_chains(structure)
+
+    new_residues = []
+    for chain in chains:
+        chain_structure = structure[structure.chain_id == chain]
+        chain_mapping = index_mapping[chain]
+
+        key_type = type(list(chain_mapping.keys())[0])
+
+        for atom in chain_structure:
+            res_id = atom.res_id
+            key = res_id
+            if key_type == str:
+                key = f"{key}"
+            new_res_id = chain_mapping[key]
+            atom.res_id = new_res_id
+            new_residues.append(atom)
+
+    new_structure = struct_array(new_residues)
+    write_structure_to_pdb(new_structure, out_pdb_file)
+
+    # add the old header
+    header = read_pdb_header(in_pdb_file)
+    add_header_info(header, out_pdb_file)
+
+
 def main():
     pdb_file = "pdb_to_correct/s1_header/2XRA_A.pdb"
-    pdb_file_out = "pdb_to_correct_debug/2XRA_A_mocked.pdb"
-    mock_missing_info_by_alignment(pdb_file, pdb_file_out)
+    pdb_file_out_mocked = "pdb_to_correct_debug/2XRA_A_mocked.pdb"
+    pdb_file_out_reindex = "pdb_to_correct_debug/2XRA_A_reindex.pdb"
+    mock_missing_info_by_alignment(pdb_file, pdb_file_out_mocked)
+    with open(pdb_file_out_mocked + ".missing", "r") as f:
+        missing_info = json.load(f)
+    reindex_pdb_file(pdb_file_out_mocked, pdb_file_out_reindex, missing_info["index_mapping"])
 
 
 if __name__ == "__main__":

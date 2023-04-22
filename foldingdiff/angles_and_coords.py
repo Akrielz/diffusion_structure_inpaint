@@ -23,7 +23,7 @@ from biotite.structure import AtomArray
 from biotite.structure.io.pdb import PDBFile
 from biotite.sequence import ProteinSequence
 
-from bin.structure_utils import gradient_descent_on_physical_constraints, write_structure_to_pdb
+from bin.structure_utils import gradient_descent_on_physical_constraints, write_structure_to_pdb, filter_backbone
 from foldingdiff import nerf
 
 EXHAUSTIVE_ANGLES = ["phi", "psi", "omega", "tau", "CA:C:1N", "C:1N:1CA"]
@@ -62,7 +62,7 @@ def canonical_distances_and_dihedrals(
     non_dihedral_angles = [a for a in angles if a not in calc_angles]
     # Gets the N - CA - C for each residue
     # https://www.biotite-python.org/apidoc/biotite.structure.filter_backbone.html
-    backbone_atoms = source_struct[struc.filter_backbone(source_struct)]
+    backbone_atoms = source_struct[filter_backbone(source_struct)]
     for a in non_dihedral_angles:
         if a == "tau" or a == "N:CA:C":
             # tau = N - CA - C internal angles
@@ -122,7 +122,11 @@ def canonical_distances_and_dihedrals(
             raise ValueError(f"Unrecognized distance: {d}")
         calc_angles[d] = struc.index_distance(backbone_atoms, indices=idx)
 
-    return pd.DataFrame({k: calc_angles[k].squeeze() for k in distances + angles})
+    try:
+        return pd.DataFrame({k: calc_angles[k].squeeze() for k in distances + angles})
+    except ValueError:
+        logging.debug(f"{fname} contains a malformed structure - skipping")
+        return None
 
 
 def compute_coords_from_all(phi, psi, omega, tau, CAC1N, C1NCA):
@@ -518,7 +522,7 @@ def get_pdb_length(fname: str) -> int:
     if structure.get_model_count() > 1:
         return -1
     chain = structure.get_structure()[0]
-    backbone = chain[struc.filter_backbone(chain)]
+    backbone = chain[filter_backbone(chain)]
     l = int(len(backbone) / 3)
     return l
 
@@ -533,7 +537,7 @@ def extract_backbone_coords(
     if structure.get_model_count() > 1:
         return None
     chain = structure.get_structure()[0]
-    backbone = chain[struc.filter_backbone(chain)]
+    backbone = chain[filter_backbone(chain)]
     ca = [c for c in backbone if c.atom_name in atoms]
     coords = np.vstack([c.coord for c in ca])
     return coords
@@ -583,7 +587,7 @@ def collect_aa_sidechain_angles(
             continue
         if residue in retval:
             continue
-        backbone_mask = struc.filter_backbone(res_atoms)
+        backbone_mask = filter_backbone(res_atoms)
         a, b, c = res_atoms[backbone_mask].coord  # Backbone
         for sidechain_atom in res_atoms[~backbone_mask]:
             d = sidechain_atom.coord
