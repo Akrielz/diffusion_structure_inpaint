@@ -22,8 +22,8 @@ def main():
     print(len(broken_pdbs))
     print(len(pdb_files))
 
-    # s1 - 28
-    # s2 - 38
+    # s1 - 8
+    # s2 - 17
 
 
 if __name__ == "__main__":
