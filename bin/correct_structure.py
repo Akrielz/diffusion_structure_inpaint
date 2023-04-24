@@ -13,18 +13,17 @@ import pandas as pd
 import torch
 from huggingface_hub import snapshot_download
 from torch.nn.functional import pad
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
-    write_corrected_structures, generate_raports
+    write_corrected_structures
 from bin.structure_utils import determine_quality_of_structure, read_pdb_file, \
     gradient_descent_on_physical_constraints, write_structure_to_pdb, mock_missing_info_by_alignment, filter_backbone, \
     reindex_pdb_file, read_pdb_header, add_header_info
 
 from foldingdiff import modelling
 from foldingdiff import sampling
-from foldingdiff.datasets import NoisedAnglesDataset, CathCanonicalAnglesOnlyDataset
+from foldingdiff.datasets import NoisedAnglesDataset
 from foldingdiff.angles_and_coords import canonical_distances_and_dihedrals, EXHAUSTIVE_ANGLES, \
     combine_original_with_predicted_structure
 from foldingdiff import utils
