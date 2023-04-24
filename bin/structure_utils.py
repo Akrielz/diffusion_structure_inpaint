@@ -8,6 +8,8 @@ import numpy as np
 import torch
 from Bio import Align
 from Bio.pairwise2 import Alignment
+from biotite.sequence import ProteinSequence
+from biotite.sequence.align import align_optimal, SubstitutionMatrix
 from biotite.structure import AtomArray, Atom, residue_iter
 from biotite.structure import array as struct_array
 from biotite.structure.io.pdb import PDBFile
@@ -210,18 +212,66 @@ _ext_aa_list = ["ALA","ARG","ASN","ASP","CYS","GLN","GLU","GLY","HIS","ILE",
                 "MSE", "ASX", "GLX", "SEC", "UNK"]
 
 
-def filter_amino_acids(array):
+def filter_amino_acids(array: AtomArray):
+    """
+    Filter an AtomArray to only include amino acids. This is the same as
+    biotite.structure.filter_amino_acids, but does no longer exclude the
+    negative residues.
+
+    Parameters
+    ----------
+    array : AtomArray
+        The array to be filtered.
+
+    Returns
+    -------
+    mask : ndarray, dtype=bool
+        A boolean mask, where `True` indicates that the corresponding
+    """
     return np.in1d(array.res_name, _ext_aa_list)
 
 
 def filter_backbone(array: AtomArray):
-    return ( ((array.atom_name == "N") |
-              (array.atom_name == "CA") |
-              (array.atom_name == "C")) &
-              filter_amino_acids(array) )
+    """
+    Filter an AtomArray to only include backbone atoms. This is the same as
+    biotite.structure.filter_backbone, but does no longer exclude the
+    negative residues.
+
+    Parameters
+    ----------
+    array : AtomArray
+        The array to be filtered.
+
+    Returns
+    -------
+    mask : ndarray, dtype=bool
+        A boolean mask, where `True` indicates that the corresponding
+    """
+    return (
+        (
+            (array.atom_name == "N") |
+            (array.atom_name == "CA") |
+            (array.atom_name == "C")
+        ) &
+        filter_amino_acids(array)
+    )
 
 
 def order_keys_in_dict(d: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Order the keys of a dictionary alphabetically.
+
+    Parameters
+    ----------
+    d : dict
+        The dictionary to be ordered.
+
+    Returns
+    -------
+    ordered_dict : dict
+        The ordered dictionary.
+    """
+
     return {
         k: d[k]
         for k in sorted(d.keys())
@@ -229,6 +279,20 @@ def order_keys_in_dict(d: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_pdb_file_pointer(file_name) -> PDBFile:
+    """
+    Get a PDBFile object from a file name.
+
+    Parameters
+    ----------
+    file_name : str
+        The file name of the PDB file.
+
+    Returns
+    -------
+    source : PDBFile
+        The PDBFile object.
+    """
+
     opener = gzip.open if file_name.endswith(".gz") else open
     with opener(str(file_name), "rt") as f:
         source = PDBFile.read(f)
@@ -237,9 +301,25 @@ def get_pdb_file_pointer(file_name) -> PDBFile:
 
 
 def read_pdb_file(file_name: str) -> Optional[AtomArray]:
+    """
+    Read a PDB file and return the AtomArray.
+
+    Parameters
+    ----------
+    file_name : str
+        The file name of the PDB file.
+
+    Returns
+    -------
+    source_struct : AtomArray
+        The AtomArray of the PDB file. In case the PDB file contains
+        multiple models, `None` is returned.
+    """
+
     source = get_pdb_file_pointer(file_name)
     if source.get_model_count() > 1:
         return None
+
     # Pull out the atomarray from atomarraystack
     source_struct = source.get_structure()[0]
 
@@ -247,14 +327,56 @@ def read_pdb_file(file_name: str) -> Optional[AtomArray]:
 
 
 def filter_only_ca(structure: AtomArray) -> AtomArray:
+    """
+    Filter an AtomArray to only include the CA atoms.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The AtomArray to be filtered.
+
+    Returns
+    -------
+    ca_atoms : AtomArray
+        The AtomArray containing only the CA atoms.
+    """
+
     return structure[structure.atom_name == "CA"]
 
 
 def get_chains(structure: AtomArray) -> List[str]:
+    """
+    Get the chains of a structure.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    chains : list
+        The chains of the structure.
+    """
+
     return list(set(structure.chain_id))
 
 
 def split_structure_by_chains(structure: AtomArray) -> Dict[str, AtomArray]:
+    """
+    Split a structure into a dictionary of chains.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    chains : dict
+        The chains of the structure.
+    """
+
     chains = get_chains(structure)
     return {
         chain: structure[structure.chain_id == chain]
@@ -262,38 +384,127 @@ def split_structure_by_chains(structure: AtomArray) -> Dict[str, AtomArray]:
     }
 
 
-def get_num_residues_id(structure: AtomArray) -> int:
+def get_highest_residues_id(structure: AtomArray) -> int:
+    """
+    Get the highest residue id of a structure.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    highest_residue_id : int
+        The highest residue id of the structure.
+    """
+
     return int(max(set(structure.res_id)))
 
 
 def get_lowest_residue_id(structure: AtomArray) -> int:
-    # In case of missing residues, the lowest residue is not 1
-    # Also in case there are residues indexed with negative numbers
-    # or with 0
+    """
+    Get the lowest residue id of a structure.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    lowest_residue_id : int
+        The lowest residue id of the structure.
+    """
+
     return int(min(set(structure.res_id)))
 
 
 def iter_residue_ids(structure: AtomArray) -> range:
-    return range(get_lowest_residue_id(structure), get_num_residues_id(structure) + 1)
+    """
+    Iterate over the residue ids of a structure. This is recommended to be
+    used in a for loop over the residues of a single chain, as different chains
+    might have overlapping residue ids.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    residue_ids : range
+        The residue ids of the structure.
+    """
+
+    return range(get_lowest_residue_id(structure), get_highest_residues_id(structure) + 1)
+
 
 def get_num_residues_by_chains(structure: AtomArray) -> Dict[str, int]:
+    """
+    Get the number of residues per chain.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    num_residues : dict
+        The number of residues per chain.
+    """
+
     chains = get_chains(structure)
     return {
-        chain: get_num_residues_id(structure[structure.chain_id == chain])
+        chain: get_highest_residues_id(structure[structure.chain_id == chain])
         for chain in chains
     }
 
 
 def get_num_residues_backbone_by_chains(structure: AtomArray) -> Dict[str, int]:
+    """
+    Get the number of residues per chain. Sometimes there are residues in the
+    structure that are not part of the backbone. This function filters out
+    these residues.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    num_residues : dict
+        The number of residues per chain.
+    """
+
     chains = get_chains(structure)
     structure = filter_only_ca(structure)
     return {
-        chain: get_num_residues_id(structure[structure.chain_id == chain])
+        chain: get_highest_residues_id(structure[structure.chain_id == chain])
         for chain in chains
     }
 
 
 def read_pdb_header(file_name: str) -> List[str]:
+    """
+    Read the header of a PDB file.
+
+    Parameters
+    ----------
+    file_name : str
+        The file name of the PDB file.
+
+    Returns
+    -------
+    header : list[str]
+        The header of the PDB file.
+
+    Notes
+    -----
+    The header is defined as the lines before the first ATOM or HETATM line.
+    """
     source = get_pdb_file_pointer(file_name)
     body_lines = ["ATOM", "HETATM"]
     stop_pointer = _search_body_lines(body_lines, source)
@@ -302,6 +513,24 @@ def read_pdb_header(file_name: str) -> List[str]:
 
 
 def read_pdb_body(file_name: str) -> List[str]:
+    """
+    Read the body of a PDB file.
+
+    Parameters
+    ----------
+    file_name : str
+        The file name of the PDB file.
+
+    Returns
+    -------
+    body : list[str]
+        The body of the PDB file.
+
+    Notes
+    -----
+    The body is defined as the lines after the first ATOM or HETATM line.
+    """
+
     source = get_pdb_file_pointer(file_name)
     body_lines = ["ATOM", "HETATM"]
     start_pointer = _search_body_lines(body_lines, source)
@@ -309,7 +538,30 @@ def read_pdb_body(file_name: str) -> List[str]:
     return source.lines[start_pointer:]
 
 
-def _search_body_lines(body_lines, source):
+def _search_body_lines(
+        body_lines: List[str],
+        source: PDBFile
+) -> int:
+    """
+    Search for the first line that starts with one of the body lines.
+
+    Parameters
+    ----------
+    body_lines : list[str]
+        The lines that indicate the start of the body.
+
+    source : PDBFilePointer
+        The PDB file pointer.
+
+    Returns
+    -------
+    pointer : int
+        The pointer to the first line that starts with one of the body lines.
+
+    Notes
+    -----
+    If no line is found, the pointer is set to 0.
+    """
     for i, line in enumerate(source.lines):
         for body_line in body_lines:
             if line.startswith(body_line):
@@ -318,6 +570,25 @@ def _search_body_lines(body_lines, source):
 
 
 def get_sequence_from_header(header: List[str]) -> Optional[Dict[str, str]]:
+    """
+    Get the sequence from the header of a PDB file.
+
+    Parameters
+    ----------
+    header : list[str]
+        The header of the PDB file.
+
+    Returns
+    -------
+    sequence : dict[str, str]
+        The sequence of the PDB file.
+
+    Notes
+    -----
+    The sequence is defined as the SEQRES lines in the header.
+    If no SEQRES lines are found, None is returned.
+    """
+
     seqres_lines = [
         line for line in header
         if line.startswith("SEQRES")
@@ -357,6 +628,24 @@ def get_sequence_from_header(header: List[str]) -> Optional[Dict[str, str]]:
 
 
 def get_sequence_from_structure(structure: AtomArray) -> Dict[str, str]:
+    """
+    Get the sequence from the structure of a PDB file.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure of the PDB file.
+
+    Returns
+    -------
+    sequence : dict[str, str]
+        The sequence of the PDB file.
+
+    Notes
+    -----
+    The sequence is defined as the residues in the structure.
+    """
+
     chains = get_chains(structure)
     structure = filter_only_ca(structure)
     return {
@@ -369,6 +658,23 @@ def get_sequence_from_structure(structure: AtomArray) -> Dict[str, str]:
 
 
 def sequence_alignments(header_seq: str, structure_seq: str) -> Alignment:
+    """
+    Align the sequence from the header with the sequence from the structure.
+
+    Parameters
+    ----------
+    header_seq : str
+        The sequence from the header.
+
+    structure_seq : str
+        The sequence from the structure.
+
+    Returns
+    -------
+    alignments : Alignment
+        The alignments between the sequences.
+    """
+
     aligner = Align.PairwiseAligner()
     aligner.gap_score = -1
     aligner.mismatch_score = -1
@@ -384,6 +690,26 @@ def missing_residues_by_sequence_alignment(
         structure_seq: str,
         all_alignments: bool = False
 ) -> List[MissingResidues]:
+    """
+    Get the missing residues by sequence alignment.
+
+    Parameters
+    ----------
+    header_seq : str
+        The sequence from the header.
+
+    structure_seq : str
+        The sequence from the structure.
+
+    all_alignments : bool
+        If True, all alignments are used to find the missing residues.
+        If False, only the first alignment is used.
+
+    Returns
+    -------
+    missing_residues : list[list[int]]
+        The missing residues by alignment.
+    """
 
     alignments = sequence_alignments(header_seq, structure_seq)
 
@@ -399,6 +725,31 @@ def missing_residues_by_sequence_alignment(
 
 
 def missing_residue_in_alignment(alignment: Alignment) -> MissingResidues:
+    """
+    Get the missing residues in an alignment.
+
+    Parameters
+    ----------
+    alignment : Alignment
+        The alignment.
+
+    Returns
+    -------
+    missing_residues : list[int]
+        The missing residues.
+
+    Notes
+    -----
+    The missing residues are defined as the residues that are not aligned.
+
+    Example
+    -------
+    >>> missing_residue_in_alignment(Alignment("ABC", "ABD"))
+    [3]
+
+    >>> missing_residue_in_alignment(Alignment("ABC", "ABCD"))
+    []
+    """
     missing_residues = []
     for i, (header_res, structure_res) in enumerate(zip(alignment[0], alignment[1])):
         if header_res != structure_res:
@@ -412,6 +763,31 @@ def missing_residues_by_sequence_alignment_by_chains(
         structure_seq: Dict[str, str],
         all_alignments: bool = False
 ) -> Dict[str, List[MissingResidues]]:
+    """
+    Get the missing residues by sequence alignment by chains.
+
+    Parameters
+    ----------
+    header_seq : dict[str, str]
+        The sequence from the header.
+
+    structure_seq : dict[str, str]
+        The sequence from the structure.
+
+    all_alignments : bool
+        If True, all alignments are used to find the missing residues.
+        If False, only the first alignment is used.
+
+    Returns
+    -------
+    missing_residues : dict[str, list[list[int]]]
+        The missing residues by alignment by chains.
+
+    Notes
+    -----
+    The missing residues are defined as the residues that are not aligned.
+    """
+
     missing_residues_by_chains = {}
     for chain in header_seq.keys():
         missing_residues_by_chains[chain] = missing_residues_by_sequence_alignment(
@@ -421,7 +797,27 @@ def missing_residues_by_sequence_alignment_by_chains(
     return missing_residues_by_chains
 
 
-def missing_residues_by_structure_look_residues_id(structure: AtomArray) -> Dict[str, MissingResidues]:
+def missing_residues_by_structure_look_residues_id(
+        structure: AtomArray
+) -> Dict[str, MissingResidues]:
+    """
+    Get the missing residues by looking at the residues id.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure of the PDB file.
+
+    Returns
+    -------
+    missing_residues : dict[str, list[int]]
+        The missing residues by chain.
+
+    Notes
+    -----
+    The missing residues are defined as the residues that are not in the structure.
+    """
+
     chains = get_chains(structure)
     structure = filter_only_ca(structure)
     missing_residues_by_chains = {}
@@ -440,6 +836,29 @@ def missing_residues_by_structure_continuity(
         structure: AtomArray,
         broken_only: bool = False
 ) -> Dict[str, MissingResidues]:
+    """
+    Get the missing and broken residues by computing the continuity of the structure.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure of the PDB file.
+
+    broken_only : bool
+        If True, only the broken residues are returned.
+        If False, all residues are returned.
+
+    Returns
+    -------
+    missing_residues : dict[str, list[int]]
+        The missing residues by chain.
+
+    Notes
+    -----
+    The missing residues are defined as the residues that are not in the structure.
+    The broken residues are defined as the residues that are not connected to the previous residue.
+    """
+
     chains = get_chains(structure)
     missing_residues_by_chains = {}
     for chain in chains:
@@ -468,6 +887,25 @@ def missing_residues_by_structure_continuity(
 
 
 def broken_residues_by_structure(structure: AtomArray):
+    """
+    Get the broken residues by computing the continuity of the structure.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure of the PDB file.
+
+    Returns
+    -------
+    broken_residues : dict[str, list[int]]
+        The broken residues by chain.
+
+    Notes
+    -----
+    The broken residues are defined as the residues that are missing the N, CA or C atoms.
+    or that have them in the wrong order.
+    """
+
     backbone_mask = filter_backbone(structure)
     backbone_structure = structure[backbone_mask]
     chains = get_chains(structure)
@@ -499,6 +937,29 @@ def broken_residues_by_structure(structure: AtomArray):
 
 
 def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
+    """
+    Determine the missing residues of a PDB file. This is a heuristic method based on the sequence
+    in the header and the structure. It is not guaranteed to be accurate.
+
+    Parameters
+    ----------
+    pdb_file : str
+        The path to the PDB file.
+
+    Returns
+    -------
+    missing_residues : dict[str, list[int]]
+        The missing residues by chain.
+
+    Notes
+    -----
+    The missing residues are defined as the residues that are not in the structure.
+    This method is combining the results of the following methods:
+    - :func:`missing_residues_by_structure_continuity`
+    - :func:`missing_residues_by_structure_look_residues_id`
+    - :func:`missing_residues_by_sequence_alignment_by_chains`
+    - :func:`broken_residues_by_structure`
+    """
 
     # Get the info
     header = read_pdb_header(pdb_file)
@@ -522,10 +983,10 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
     if missing_residues_header is not None:
 
         # Reindex the missing residues by header
-        structure = reindex_alignments(missing_residues_header, structure)
+        structure = _reindex_alignments(missing_residues_header, structure)
 
         # We need to drop all the alignments which include already existent residues
-        missing_residues_header = keep_only_plausible_alignments(missing_residues_header, structure)
+        missing_residues_header = _keep_only_plausible_alignments(missing_residues_header, structure)
 
         # We need to check all the given alignments to decide which is the best for each chain
         for chain in missing_residues_header.keys():
@@ -561,10 +1022,33 @@ def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
     return missing_residues
 
 
-def reindex_alignments(
+def _reindex_alignments(
         missing_residues_header: Dict[str, List[MissingResidues]],
         structure: AtomArray
 ):
+    """
+    Reindex the missing residues by header. This is needed because the sequence alignment
+    is done on the sequence in the header, which is not necessarily the same as the sequence
+    in the structure.
+
+    Parameters
+    ----------
+    missing_residues_header : dict[str, list[list[int]]]
+        The missing residues by chain.
+
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    structure : AtomArray
+        The structure with the reindexed residues.
+
+    Notes
+    -----
+    This method is modifying the structure in place.
+    """
+
     for chain in missing_residues_header.keys():
         chain_struct = structure[structure.chain_id == chain]
         start_index = get_lowest_residue_id(chain_struct)
@@ -576,7 +1060,30 @@ def reindex_alignments(
     return structure
 
 
-def keep_only_plausible_alignments(missing_residues_header, structure):
+def _keep_only_plausible_alignments(
+        missing_residues_header: Dict[str, List[MissingResidues]],
+        structure: AtomArray
+):
+    """
+    Keep only the plausible alignments. The plausible alignments are the ones which
+    do not contain any residue that is in the structure. This is needed because the
+    sequence alignment is done on the sequence in the header, which is not necessarily
+    the same as the sequence in the structure.
+
+    Parameters
+    ----------
+    missing_residues_header : dict[str, list[list[int]]]
+        The missing residues by chain.
+
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    missing_residues_header : dict[str, list[list[int]]]
+        The missing residues by chain.
+    """
+
     missing_residues_plausible = defaultdict(list)
     for chain in missing_residues_header.keys():
         for i, alignment in enumerate(missing_residues_header[chain]):
@@ -590,14 +1097,31 @@ def keep_only_plausible_alignments(missing_residues_header, structure):
 
             # If not, we can use this alignment
             missing_residues_plausible[chain].append(alignment)
+
     missing_residues_header = missing_residues_plausible
     return missing_residues_header
 
 
-def get_all_residues_id(
+def _get_all_residues_id(
         structure: AtomArray,
         missing_residues_id: Dict[str, MissingResidues]
 ) -> Dict[str, List[int]]:
+    """
+    Get all the residues id in the structure, and combine them with the missing residues.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    missing_residues_id : dict[str, list[int]]
+        The missing residues by chain.
+
+    Returns
+    -------
+    all_residues_id : dict[str, list[int]]
+        The residues id in the structure, and the missing residues.
+    """
 
     all_residues_id = {
         chain: []
@@ -610,11 +1134,23 @@ def get_all_residues_id(
 
     return all_residues_id
 
-from biotite.sequence import ProteinSequence
-from biotite.sequence.align import align_optimal, SubstitutionMatrix
-from biotite.structure.io.pdb import PDBFile
 
-def check_working_alignment(arr):
+def _check_working_alignment(arr: List[int]) -> bool:
+    """
+    Check if the alignment is working. The alignment is working if the missing residues
+    can be replaced with consecutive numbers.
+
+    Parameters
+    ----------
+    arr : list[int]
+        The array of residues id.
+
+    Returns
+    -------
+    is_working : bool
+        True if the alignment is working, False otherwise.
+    """
+
     # find the first and last non-missing value in the array
     start, end = None, None
     for i in range(len(arr)):
@@ -659,7 +1195,21 @@ def check_working_alignment(arr):
     return True
 
 
-def replace_monotonic(arr):
+def _replace_monotonic(arr: List[int]) -> List[int]:
+    """
+    Replace the missing values in the array with consecutive numbers.
+
+    Parameters
+    ----------
+    arr : list[int]
+        The array of residues id.
+
+    Returns
+    -------
+    arr : list[int]
+        The array of residues id with the missing values replaced with consecutive numbers.
+    """
+
     # Find the first non-negative value in the array
     i = 0
     while i < len(arr) and arr[i] == -1:
@@ -667,7 +1217,7 @@ def replace_monotonic(arr):
     
     # If the first value is -1, backfill with consecutive integers starting from i
     if i > 0:
-        for j in range(i-1,-1,-1):
+        for j in range(i-1, -1, -1):
             arr[j] = arr[j + 1] - 1
     
     prev = arr[i]    
@@ -693,6 +1243,26 @@ def replace_monotonic(arr):
 
 
 def align_structure_to_sequence(seq: str, pdb_file: str):
+    """
+    Align a sequence to a structure to find gaps.
+
+    Parameters
+    ----------
+    seq : str
+        The sequence.
+
+    pdb_file : str
+        The path to the PDB file.
+
+    Returns
+    -------
+    res_ids : list[int]
+        The residue ids.
+
+    residues: list[str]
+        The residues.
+    """
+
     # Read structure and get sequence from it
     struct = PDBFile.read(pdb_file).get_structure(model=1)
     struct_res = [struct[struct.res_id == r].res_name[0] for r in np.unique(struct.res_id)]
@@ -711,14 +1281,14 @@ def align_structure_to_sequence(seq: str, pdb_file: str):
     residue_ids = []
     for aln in alignment:
         residue_ids = [seq_res_map.get(i, -1) for i in aln.trace[:,-1]]
-        if check_working_alignment(residue_ids):
+        if _check_working_alignment(residue_ids):
             break
 
     if residue_ids == []:
         raise Exception("Structure does not align to sequence")
     
     # Return residue ids and names of gaps to fill
-    residue_ids = replace_monotonic(residue_ids)
+    residue_ids = _replace_monotonic(residue_ids)
     seqs = aln.get_gapped_sequences()
     gaps = [i for i,c in enumerate(seqs[1]) if c == '-']
     residues = [seqs[0][i] for i in gaps]
@@ -729,10 +1299,29 @@ def align_structure_to_sequence(seq: str, pdb_file: str):
 def mock_missing_info(
         in_pdb_file: str,
         out_pdb_file: str
-):
+) -> AtomArray:
+    """
+    Mock missing information in a PDB file. This is done by detecting missing residues
+    using a heuristic and then filling in the missing residues with the correct
+    residue names and residue ids.
+
+    Parameters
+    ----------
+    in_pdb_file : str
+        The path to the input PDB file.
+
+    out_pdb_file : str
+        The path to the output PDB file.
+
+    Returns
+    -------
+    structure : AtomArray
+        The structure.
+    """
+
     structure = read_pdb_file(in_pdb_file)
     missing_residues_id = determine_missing_residues(in_pdb_file)
-    all_residues_id = get_all_residues_id(structure, missing_residues_id)
+    all_residues_id = _get_all_residues_id(structure, missing_residues_id)
 
     header = read_pdb_header(in_pdb_file)
     header_seq = get_sequence_from_header(header)
@@ -829,6 +1418,22 @@ def add_header_info(
         header: List[str],
         out_pdb_file: str
 ):
+    """
+    Add the header information to a PDB file.
+
+    Parameters
+    ----------
+    header : List[str]
+        The header information.
+
+    out_pdb_file : str
+        The path to the output PDB file.
+
+    Returns
+    -------
+    None
+    """
+
     body = read_pdb_body(out_pdb_file)
 
     new_pdb_lines = header + body
@@ -842,7 +1447,7 @@ def add_header_info(
 
 def determine_quality_of_structure(
         structure: AtomArray,
-):
+) -> float:
     """
     This is a very simple function that determines the quality of a structure based
     on the distances between the backbone atoms. Because of that, it only works
@@ -851,6 +1456,15 @@ def determine_quality_of_structure(
     The lower the score, the better the structure.
 
     Quality range: [0, inf)
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    quality : float
     """
 
     chains = get_chains(structure)
@@ -889,6 +1503,29 @@ def determine_quality_of_structure(
 
 
 def compute_backbone_distances(structure: AtomArray):
+    """
+    Compute the distances between the backbone atoms of a structure.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    backbone_distances : Dict[str, Dict[str, List[float]]]
+        The distances between the backbone atoms of each chain.
+
+        The keys of the first dictionary are the chain IDs.
+
+        The keys of the second dictionary are the atom pairs:
+            - "n_ca"
+            - "ca_c"
+            - "c_n"
+
+        The values of the second dictionary are the distances between the atoms.
+    """
+
     chains = get_chains(structure)
 
     backbone_distances = {
@@ -925,6 +1562,27 @@ def compute_backbone_distances(structure: AtomArray):
 
 
 def compute_median_backbone_distances(structure: AtomArray):
+    """
+    Compute the median distances between the backbone atoms of a structure.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    Returns
+    -------
+    median_backbone_distances : Dict[str, float]
+        The median distances between the backbone atoms.
+
+        The keys of the dictionary are the atom pairs:
+            - "n_ca"
+            - "ca_c"
+            - "c_n"
+
+        The values of the dictionary are the median distances between the atoms.
+    """
+
     backbone_distances = compute_backbone_distances(structure)
 
     median_backbone_distances = {
@@ -937,6 +1595,40 @@ def compute_median_backbone_distances(structure: AtomArray):
 
 
 def backbone_loss_function(coords: torch.Tensor, pad_mask: torch.Tensor):
+    """
+    Compute the loss function for the backbone distances.
+
+    Parameters
+    ----------
+    coords : torch.Tensor
+        The coordinates of the atoms.
+
+        Shape: [batch_size, num_atoms, 3]
+
+    pad_mask : torch.Tensor
+        The padding mask.
+
+        Shape: [batch_size, num_atoms]
+
+    Returns
+    -------
+    loss : torch.Tensor
+        The loss.
+
+    Notes
+    -----
+    The loss is computed as the sum of the squared differences between the distances
+    between the backbone atoms and the reference distances.
+
+    The reference distances are the standard distances between the backbone atoms.
+
+    The num_atoms must be [3 * num_residues] for each structure in the batch, where
+    num_residues is the number of residues in the structure. The 3 atoms are the
+    N, CA, and C atoms.
+
+    The padding mask is used to ignore the padding atoms when computing the loss.
+    """
+
     # coords.shape = [batch_size, num_atoms, 3]
     # pad_mask.shape = [batch_size, num_atoms]
 
@@ -962,6 +1654,22 @@ def backbone_loss_function(coords: torch.Tensor, pad_mask: torch.Tensor):
 
 
 def write_structure_to_pdb(structure: AtomArray, file_name: str) -> str:
+    """
+    Write a structure to a PDB file.
+
+    Parameters
+    ----------
+    structure : AtomArray
+        The structure.
+
+    file_name : str
+        The name of the file to write the structure to.
+
+    Returns
+    -------
+    file_name : str
+    """
+
     sink = PDBFile()
     sink.set_structure(structure)
     sink.write(file_name)
@@ -973,9 +1681,39 @@ def atom_contact_loss_function(
         coords: torch.Tensor,
         pad_mask: torch.Tensor,
         contact_distance=1.2
-):
-    # coords shape = [batch_size, num_atoms, 3]
-    # pad_mask shape = [batch_size, num_atoms]
+) -> torch.Tensor:
+    """
+    Compute the loss function for the atom contacts.
+
+    Parameters
+    ----------
+    coords : torch.Tensor
+        The coordinates of the atoms.
+
+        Shape: [batch_size, num_atoms, 3]
+
+    pad_mask : torch.Tensor
+        The padding mask.
+
+        Shape: [batch_size, num_atoms]
+
+    contact_distance : float
+        The distance threshold for the contacts.
+
+    Returns
+    -------
+    loss : torch.Tensor
+        The loss.
+
+    Notes
+    -----
+    The loss is computed as the sum of the inverse distances between the atoms
+    that are in contact.
+
+    The num_atoms must be [3 * num_residues] for each structure in the batch, where
+    num_residues is the number of residues in the structure. The 3 atoms are the
+    N, CA, and C atoms.
+    """
 
     # Make a distance matrix
     dist_mat = torch.cdist(coords, coords)
@@ -1006,6 +1744,49 @@ def gradient_descent_on_physical_constraints(
         show_progress: bool = True,
         lr: float = 0.01,
 ):
+    """
+    Perform gradient descent on the physical constraints.
+
+    Parameters
+    ----------
+    coords : torch.Tensor
+        The coordinates of the atoms.
+
+        Shape: [batch_size, num_atoms, 3]
+
+    inpaint_mask : torch.Tensor
+        The positions where the coordinates are allowed to change.
+
+        Shape: [batch_size, num_atoms]
+
+    pad_mask : torch.Tensor
+        The padding mask. This is used to ignore the padding atoms when computing
+        the loss.
+
+        Shape: [batch_size, num_atoms]
+
+    num_epochs : int
+        The number of epochs to run the gradient descent.
+
+    device : torch.device
+        The device to run the gradient descent on.
+
+    stop_patience : int
+        The number of epochs to wait before stopping the gradient descent if the
+        loss is not improving.
+
+    show_progress : bool
+        Whether to show a progress bar.
+
+    lr : float
+        The learning rate.
+
+    Returns
+    -------
+    coords : torch.Tensor
+        The coordinates of the atoms after the gradient descent.
+    """
+
     coords = torch.nn.Parameter(coords.to(device))
     optimizer = torch.optim.Adam([coords], lr=lr)
     inpaint_mask = inpaint_mask.to(device)
@@ -1056,6 +1837,29 @@ def add_sequence_to_pdb_header(
         chain: Optional[str] = None,
         out_pdb_file: Optional[str] = None
 ):
+    """
+    Add the sequence to the header of the PDB file, for the given chain.
+
+    Parameters
+    ----------
+    in_pdb_file : str
+        The input PDB file.
+
+    sequence : str
+        The sequence to add to the header.
+
+    chain : str
+        The chain to add the sequence to.
+
+    out_pdb_file : str
+        The output PDB file.
+
+    Returns
+    -------
+    out_pdb_file : str
+        The output PDB file.
+    """
+
     header = read_pdb_header(in_pdb_file)
     body = read_pdb_body(in_pdb_file)
 
@@ -1063,14 +1867,12 @@ def add_sequence_to_pdb_header(
         structure = read_pdb_file(in_pdb_file)
         chain = get_chains(structure)[0]
 
-    # a line in the header that has sequence should look like this
+    """
     # Example:
     # SEQRES   4 D  109  ALA ASN TYR CYS SER GLY GLU CYS GLU PHE VAL PHE LEU
     # General:
     # SEQRES   <line> <chain> <num_residues> <residues> <max 13 residues per line>
 
-    # More rules for the header seqres
-    """
      1 -  6        Record name    "SEQRES"
      8 - 10        Integer        serNum       Serial number of the SEQRES record for  the
                                                current  chain. Starts at 1 and increments
@@ -1135,6 +1937,27 @@ def mock_missing_info_by_alignment(
         out_pdb_file: str,
         chain: Optional[str] = None,
 ):
+    """
+    Mock the missing information in the PDB file by the alignment to the sequence in the header.
+
+    Parameters
+    ----------
+    in_pdb_file : str
+        The input PDB file.
+
+    out_pdb_file : str
+        The output PDB file.
+
+    chain : str
+        The chain to add the sequence to.
+        In case the chain is not given, the first chain will be used.
+
+    Returns
+    -------
+    new_atom_array : AtomArray
+        The new atom array with the missing information mocked.
+    """
+
     header = read_pdb_header(in_pdb_file)
     header_sequence = get_sequence_from_header(header)
     structure: AtomArray = read_pdb_file(in_pdb_file)
@@ -1251,6 +2074,27 @@ def reindex_pdb_file(
         out_pdb_file: str,
         index_mapping: Dict[str, Dict[int, int]],
 ):
+    """
+    Reindex a PDB file according to the given mapping.
+
+    Parameters
+    ----------
+    in_pdb_file : str
+        The input PDB file.
+
+    out_pdb_file : str
+        The output PDB file.
+
+    index_mapping : Dict[str, Dict[int, int]]
+        The mapping from the old residue ids to the new residue ids.
+        The mapping is a dictionary with the chain as key and a dictionary
+        with the old residue id as key and the new residue id as value.
+
+    Returns
+    -------
+    None
+    """
+
     structure = read_pdb_file(in_pdb_file)
     chains = get_chains(structure)
 
@@ -1279,6 +2123,9 @@ def reindex_pdb_file(
 
 
 def main():
+    """
+    Tests on the fly
+    """
     pdb_file = "pdb_to_correct/s1_header/2XRA_A.pdb"
     pdb_file_out_mocked = "pdb_to_correct_debug/2XRA_A_mocked.pdb"
     pdb_file_out_reindex = "pdb_to_correct_debug/2XRA_A_reindex.pdb"

@@ -9,7 +9,8 @@ def main():
     # fname = "pdb_to_correct/mocked.pdb"
     # fname = "pdb_corrected/best_pdb/original_best.pdb"
     # fname = "pdb_corrected/fine_tuned/1AHW_C.pdb"
-    fname = "pdb_corrected/corrected_structures/1AHW_C.pdb"
+    # fname = "pdb_corrected/corrected_structures/1AHW_C.pdb"
+    fname = "pdb_corrected_s1_header/fine_tuned/4K24_U.pdb"
 
     source_struct = read_pdb_file(fname)
 

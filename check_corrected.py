@@ -22,6 +22,8 @@ def main():
     print(len(broken_pdbs))
     print(len(pdb_files))
 
+    print(broken_pdbs)
+
     # s1 - 8
     # s2 - 17
 
