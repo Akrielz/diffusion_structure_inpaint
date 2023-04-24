@@ -19,8 +19,8 @@ from tqdm import tqdm
 from bin.sample import build_datasets, plot_ramachandran, SEED, \
     write_corrected_structures, generate_raports
 from bin.structure_utils import determine_quality_of_structure, read_pdb_file, \
-    gradient_descent_on_physical_constraints, write_structure_to_pdb, mock_missing_info_by_alignment, filter_backbone
-
+    gradient_descent_on_physical_constraints, write_structure_to_pdb, mock_missing_info_by_alignment, filter_backbone, \
+    reindex_pdb_file, read_pdb_header, add_header_info
 
 from foldingdiff import modelling
 from foldingdiff import sampling
@@ -33,6 +33,9 @@ from foldingdiff import utils
 def build_parser() -> argparse.ArgumentParser:
     """
     Build CLI parser
+
+    Returns:
+        argparse.ArgumentParser: CLI parser
     """
     parser = argparse.ArgumentParser(
         usage=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -114,27 +117,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def read_to_correct_structure(pdb_file: str, pad_len=128) -> Dict[str, torch.Tensor]:
-    clean_dset = CathCanonicalAnglesOnlyDataset(
-        pad=pad_len,
-        trim_strategy='',
-        fnames=[pdb_file],
-        use_cache=False,
-    )
-    noised_dset = NoisedAnglesDataset(
-        clean_dset,
-        timesteps=1000,
-        beta_schedule='cosine'
-    )
-    dl = DataLoader(noised_dset, batch_size=32, shuffle=False)
-    features = iter(dl).next()
-
-    return features
-
-
 def get_real_len_of_structure(
         features: Union[Dict[str, torch.Tensor], str]
 ) -> int:
+    """
+    Get the real length of the structure
+
+    Args:
+        features (Union[Dict[str, torch.Tensor], str]): Either a Dict with the
+            keys "attn_mask" or a str with the path to the PDB file
+
+    Returns:
+        int: The real length of the structure
+
+    Raises:
+        ValueError: If the features is neither a Dict nor a str
+    """
+
     # check if features is a Dict
     if isinstance(features, dict):
         attn_mask = features['attn_mask']
@@ -150,7 +149,16 @@ def get_real_len_of_structure(
     raise ValueError("features should be either a Dict or a str")
 
 
-def compute_angles_from_pdb(pdb_file: str):
+def compute_angles_from_pdb(pdb_file: str) -> pd.DataFrame:
+    """
+    Compute the angles from the PDB file
+
+    Args:
+        pdb_file (str): Path to the PDB file
+
+    Returns:
+        pd.DataFrame: DataFrame with the angles
+    """
     df = canonical_distances_and_dihedrals(pdb_file, angles=EXHAUSTIVE_ANGLES)
     return df
 
@@ -161,6 +169,26 @@ def overwrite_the_angles(
         train_dset,
         pad_len: int = 128
 ):
+    """
+    Overwrite the angles in the to_correct_features with the angles from the
+    pdb_file. This is relevant as these angles are shifted in the proper way
+    to be handled by the model, and are also padded to the correct length.
+
+    Args:
+        to_correct_features (Dict[str, torch.Tensor]):
+            Dict with the features to correct
+        pdb_file (str):
+            Path to the PDB file
+        train_dset (NoisedAnglesDataset):
+            Dataset used for training
+        pad_len (int, optional):
+            Length to pad the angles to. Defaults to 128.
+
+    Returns:
+        Dict[str, torch.Tensor]:
+            Dict with the corrected features
+    """
+
     # Read the angles
     angles = compute_angles_from_pdb(pdb_file)
 
@@ -194,27 +222,23 @@ def overwrite_the_angles(
     return to_correct_features
 
 
-def mock_missing_info_mask(features: Dict[str, torch.Tensor], num_missing=2) -> torch.Tensor:
-    attn_mask = features['attn_mask']
-    # select num_missing random positions that are masked
-    masked_positions = torch.where(attn_mask == 1)[1]
-    num_masked = len(masked_positions)
-
-    # random_pos = torch.randperm(num_masked)[:num_missing]
-    random_pos = torch.tensor([i for i in range(6, 8)])
-
-    # create mask
-    mask = torch.zeros_like(attn_mask)
-    mask[:, masked_positions[random_pos]] = 1
-
-    # mask = torch.zeros((1, 128))
-    return mask
-
-
 def load_missing_info_mask(
         missing_info_mask_file: str,
         pad_len: int
 ) -> torch.Tensor:
+    """
+    Load the missing_info_mask from the missing_info_mask_file
+
+    Args:
+        missing_info_mask_file (str):
+            Path to the missing_info_mask_file
+
+        pad_len (int):
+            Length of the mask
+
+    Returns:
+        torch.Tensor:
+    """
 
     # Load the json file
     with open(missing_info_mask_file, "r") as f:
@@ -239,7 +263,25 @@ def load_missing_info_mask(
     return mask
 
 
-def compute_pad_len(real_len, window_size, window_step):
+def compute_pad_len(real_len: int, window_size: int, window_step: int) -> int:
+    """
+    Compute the pad_len based on the real_len, window_size and window_step
+
+    Args:
+        real_len (int):
+            Real length of the structure
+        window_size (int):
+            Window size of the model
+        window_step (int):
+            Window step of the model
+
+    Returns:
+        int:
+            The pad_len
+
+    Example:
+        compute_pad_len(10, 38, 16) == 48
+    """
     # We must have the pad len at least the window_size due to the model
     pad_len = max(window_size, real_len)
 
@@ -277,17 +319,32 @@ def main():
     )
 
     # Mock the pdb to correct file
-    mocked_pdb_file_path = str(output_dir / "mocked_pdb/mocked.pdb")
+    mocked_pdb_dir = output_dir / "mocked_pdb"
+    mocked_pdb_file_path = str(mocked_pdb_dir / "mocked.pdb")
+    reindex_pdb_file_path = str(mocked_pdb_dir / "mocked_reindex.pdb")
     os.makedirs(output_dir / "mocked_pdb", exist_ok=True)
     mock_missing_info_by_alignment(args.pdb_to_correct, mocked_pdb_file_path)
+    with open(mocked_pdb_file_path + ".missing", "r") as f:
+        index_mapping = json.load(f)['index_mapping']
+    reindex_pdb_file(mocked_pdb_file_path, reindex_pdb_file_path, index_mapping)
     missing_residues_file = mocked_pdb_file_path + ".missing"
 
     # Load the structure to correct
-    to_correct_real_len = get_real_len_of_structure(mocked_pdb_file_path)
-    pad_len = compute_pad_len(to_correct_real_len, args.window_size, args.window_step)
-    to_correct_features = read_to_correct_structure(mocked_pdb_file_path, pad_len)
-    to_correct_features = overwrite_the_angles(to_correct_features, mocked_pdb_file_path, train_dset, pad_len)
-    to_correct_mask = load_missing_info_mask(missing_residues_file, to_correct_features["attn_mask"])
+    real_len = get_real_len_of_structure(reindex_pdb_file_path)
+    attention_mask = torch.ones([1, real_len])
+    attention_mask[0, :real_len] = 1
+
+    pad_len = compute_pad_len(real_len, args.window_size, args.window_step)
+    to_correct_features = {
+        "attn_mask": attention_mask,
+    }
+
+    # Compute angles
+    to_correct_features = overwrite_the_angles(
+        to_correct_features, reindex_pdb_file_path, train_dset, pad_len
+    )
+
+    to_correct_mask = load_missing_info_mask(missing_residues_file, pad_len)
 
     # Load the model
     model = modelling.BertForDiffusionBase.from_dir(
@@ -299,7 +356,7 @@ def main():
     sampled = sampling.sample_missing_structure(
         model,
         train_dset,
-        to_correct_real_len,
+        real_len,
         to_correct_mask,
         to_correct_features,
         n=args.num,
@@ -323,7 +380,7 @@ def main():
         s.to_csv(sampled_angles_folder / f"generated_{i}.csv.gz")
 
     # read the atom_array of the structure to correct
-    to_correct_atom_array = read_pdb_file(mocked_pdb_file_path)
+    to_correct_atom_array = read_pdb_file(reindex_pdb_file_path)
 
     # Write the sampled angles as pdb files
     pdb_files = write_corrected_structures(sampled_dfs, output_dir / "sampled_pdb", to_correct_atom_array, to_correct_mask)
@@ -332,12 +389,18 @@ def main():
     # Fine tune the sampled structures
     fine_tuned_pdb_files = fine_tune_predictions(device, output_dir, pdb_files, to_correct_mask)
 
-    generate_raports(args, final_sampled, output_dir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
-                     test_dset, test_values_stacked, train_dset)
+    # generate_raports(args, final_sampled, output_dir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
+    #                  test_dset, test_values_stacked, train_dset)
 
     # Iterate through the generated structures and compute their quality
     determine_best_pdb("original_best.pdb", output_dir, pdb_files)
     determine_best_pdb("fine_tuned_best.pdb", output_dir, fine_tuned_pdb_files)
+
+    # add the old header to the fine-tuned and corrected pdb files
+    header = read_pdb_header(reindex_pdb_file_path)
+    for i, (fine_tuned, corrected) in enumerate(zip(fine_tuned_pdb_files, pdb_files)):
+        add_header_info(header, fine_tuned)
+        add_header_info(header, corrected)
 
 
 def prepare_output_dir(args):

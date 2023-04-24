@@ -10,10 +10,11 @@ from Bio import Align
 from Bio.pairwise2 import Alignment
 from biotite.sequence import ProteinSequence
 from biotite.sequence.align import align_optimal, SubstitutionMatrix
-from biotite.structure import AtomArray, Atom, residue_iter
+from biotite.structure import AtomArray, Atom
 from biotite.structure import array as struct_array
 from biotite.structure.io.pdb import PDBFile
 from tqdm import tqdm
+
 
 d3to1 = {
     'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': 'K',
@@ -741,14 +742,6 @@ def missing_residue_in_alignment(alignment: Alignment) -> MissingResidues:
     Notes
     -----
     The missing residues are defined as the residues that are not aligned.
-
-    Example
-    -------
-    >>> missing_residue_in_alignment(Alignment("ABC", "ABD"))
-    [3]
-
-    >>> missing_residue_in_alignment(Alignment("ABC", "ABCD"))
-    []
     """
     missing_residues = []
     for i, (header_res, structure_res) in enumerate(zip(alignment[0], alignment[1])):
@@ -1497,7 +1490,7 @@ def determine_quality_of_structure(
         )
 
     # Quality score is the mean of the quality of each chain
-    quality_score = np.mean(list(quality.values()))
+    quality_score = float(np.mean(list(quality.values())))
 
     return quality_score
 

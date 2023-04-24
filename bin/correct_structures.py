@@ -26,14 +26,17 @@ from bin.structure_utils import read_pdb_file, mock_missing_info_by_alignment, r
 from foldingdiff import modelling
 from foldingdiff.sampling import sample_missing_structures
 
-
+# Replace the functions with our versions to allow working with negative indices
 biotite.structure.filter_backbone = filter_backbone_real
 biotite.structure.filter_amino_acids = filter_amino_acids_real
 
 
 def build_parser() -> argparse.ArgumentParser:
     """
-    Build CLI parser
+    Build CLI parser.
+
+    Returns:
+        argparse.ArgumentParser: CLI parser
     """
     parser = argparse.ArgumentParser(
         usage=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -171,7 +174,6 @@ def main():
     # sort the pdb files path, pdb file names and mocked files by real_lens
     pdb_files_path = [x for _, x in sorted(zip(real_lens, pdb_files_path))]
     pdb_file_names = [x for _, x in sorted(zip(real_lens, pdb_file_names))]
-    mocked_pdb_files_path = [x for _, x in sorted(zip(real_lens, mocked_pdb_files_path))]
     missing_residues_files = [x for _, x in sorted(zip(real_lens, missing_residues_files))]
     mocked_pdb_files_reindex_path = [x for _, x in sorted(zip(real_lens, mocked_pdb_files_reindex_path))]
     real_lens = sorted(real_lens)
@@ -257,60 +259,12 @@ def main():
         output_names=pdb_file_names,
     )
 
-    # output_dir = Path(args.output_dir)
-    # missing_residues_dir = output_dir / "mocked_pdb"
-    #
-    # mocked_pdb_files_path = [
-    #     str(f)
-    #     for f in output_dir.glob("mocked_pdb/*.pdb")
-    # ]
-    #
-    # corrected_pdb_files = [
-    #     str(f)
-    #     for f in output_dir.glob("corrected_structures/*.pdb")
-    # ]
-    #
-    # # read all files ending in "*.missing"
-    # missing_residues_files = [
-    #     str(f)
-    #     for f in missing_residues_dir.glob("*.missing")
-    # ]
-    #
-    # # Sort the mocked, missing and corrected alphabetically
-    # mocked_pdb_files_path.sort()
-    # missing_residues_files.sort()
-    # corrected_pdb_files.sort()
-    #
-    # real_lens = [
-    #     get_real_len_of_structure(mocked_pdb_file_path)
-    #     for mocked_pdb_file_path in mocked_pdb_files_path
-    # ]
-    #
-    # # sort by real length
-    # mocked_pdb_files_path = [x for _, x in sorted(zip(real_lens, mocked_pdb_files_path))]
-    # missing_residues_files = [x for _, x in sorted(zip(real_lens, missing_residues_files))]
-    # corrected_pdb_files = [x for _, x in sorted(zip(real_lens, corrected_pdb_files))]
-    # real_lens = sorted(real_lens)
-    #
-    # pad_len = compute_pad_len(
-    #     max(real_lens),
-    #     args.window_size,
-    #     args.window_step
-    # )
-    #
-    # device = torch.device(args.device)
-    #
-    # infill_masks = torch.vstack([
-    #     load_missing_info_mask(missing_residues_file, pad_len=pad_len)
-    #     for missing_residues_file in missing_residues_files
-    # ])
-
     # fine tune the structures with physical constraints
     fine_tuned_pdb_files = fine_tune_predictions(
         device, output_dir, corrected_pdb_files, infill_masks, batch_size=args.batch_size
     )
 
-    # add the old headers to the fine tuned structures and corrected structures
+    # add the old headers to the fine-tuned structures and corrected structures
     for i, (fine_tuned, corrected) in enumerate(zip(fine_tuned_pdb_files, corrected_pdb_files)):
         header = read_pdb_header(mocked_pdb_files_reindex_path[i])
         add_header_info(header, fine_tuned)
