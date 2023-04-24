@@ -14,6 +14,8 @@ from biotite.structure import array as struct_array
 from biotite.structure.io.pdb import PDBFile
 from tqdm import tqdm
 
+import faspr
+
 d3to1 = {
     'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': 'K',
     'ILE': 'I', 'PRO': 'P', 'THR': 'T', 'PHE': 'F', 'ASN': 'N',
@@ -484,12 +486,29 @@ def broken_residues_by_structure(structure: AtomArray):
     return broken_residues_by_chains
 
 
+def model_sidechains(input_file: str, output_file: str, residue_indices: List[int] = []):
+    if residue_indices:
+        "Indices where residue sidechains need modeling"
+        structure = read_pdb_file(input_file)
+        struct_seq = get_sequence_from_structure(structure).lower()
+        seq = ''.join([c.upper() if i in residue_indices else c for i, c in enumerate(struct_seq)])
+        seq_file = f'{input_file[:-4]}.txt' 
+        with open(seq_file, 'w') as f:
+            f.write(seq)
+        seq_flag = True
+    else:
+        "This will instead repack all the sidechains in the pdb file"
+        seq_file = ''
+        seq_flag = False
+
+    faspr.FASPRcpp(input_file, output_file, seq_file, seq_flag)
+
+
 def determine_missing_residues(pdb_file: str) -> Dict[str, MissingResidues]:
 
     # Get the info
     header = read_pdb_header(pdb_file)
     structure = read_pdb_file(pdb_file)
-
     # Compute all the missing residues possibilities
     header_seq = get_sequence_from_header(header)
     missing_residues_header = None
