@@ -11,6 +11,7 @@ mpl-scatter-density
 astropy
 gitpython
 biotite==0.34
+biopython
 requests
 pybind11
 faspr

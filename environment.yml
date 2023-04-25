@@ -5,6 +5,7 @@ channels:
   - pytorch
   - conda-forge
   - huggingface
+  - bioconda
   - salilab
 dependencies:
   - python=3.8
@@ -23,6 +24,8 @@ dependencies:
   - conda-forge::biotite=0.34
   - conda-forge::scikit-learn=1.2.1
   - bioconda::tmalign
+  - bioconda::mmseqs2
+  - bioconda::clustalo
   - conda-forge::requests
   - conda-forge::pdbfixer
   - conda-forge::pybind11
