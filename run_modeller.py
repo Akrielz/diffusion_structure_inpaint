@@ -59,18 +59,18 @@ def build_homology_model(alignment_file, target_name, chain, output_folder):
     # Create a new automodel object
     class MyModel(AutoModel):
         def select_atoms(self):
-            return selection(self.residue_range(f'1:{chain}', f'last:{chain}'))
+            return selection(self.residue_range(f'1:A', f'1:A'))
 
-    mdl = AutoModel(env, alnfile=alignment_file, knowns=template_codes, sequence=target_code)
+    mdl = MyModel(env, alnfile=alignment_file, knowns=template_codes, sequence=target_code, inifile=target_code)
     mdl.starting_model = 1
     mdl.ending_model = 1
 
     # Set the output directory
     mdl.path = output_folder
-
+    
     # Build the model
     mdl.make()
-
+    return mdl.outputs[0]['name']
 env = Environ()
 # directories for input atom files
 env.io.atom_files_directory = ['.', '5f3b_C', 'pdb/modeller/5f3b_C']
@@ -83,5 +83,5 @@ output_folder = '5f3b_C/'
 
 # reorder_alignment_file(alignment_file, target_name, chain, reordered_alignment_file)
 reordered_alignment_file = 'pdb/modeller/5f3b_C/sample_new.pir'
-build_homology_model(reordered_alignment_file, target_name, chain, output_folder)
+build_homology_model(reordered_alignment_file, target_name, chain, 'out')
 

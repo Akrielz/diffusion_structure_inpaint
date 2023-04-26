@@ -5,7 +5,8 @@ import pdbfixer
 from openmm.app import PDBFile
 import modeller as m
 import modeller.automodel as am
-
+from set_up_modeller_prereqs import extract_chain_to_fasta, run_mmseqs2, process_m8_file, trim_alignment_to_target
+from run_modeller import reorder_alignment_file, build_homology_model
 
 def check_discontinuity(struct: AtomArray):
     disc = cbc(struct)
@@ -28,35 +29,43 @@ def fix_pdb(pdb_file: str):
     return pdb_fixed
 
 
-def get_template(sequence: str):
-    pass
-
-
-def get_alignment(pdb_file: str, template_file: str):
-    pass
-
-
-def homology_model(pdb_file: str, sequence: str, n: int = 5)
-    env = m.Environ()
-    template_pdb = get_template(sequence)
-    align_file = get_alignment(pdb_file, template_pdb)
+def get_alignment(pdb_file: str, target: str, chain_id: str):
+    pdbfasta_folder = './mmseqs2/pdbfasta'
+    target_folder = './pdb/modeller'
+    extract_chain_to_fasta(pdb_file, chain_id, f'{target}.fasta', pdb_file)
     
-    model = am.AutoModel(
-                env, 
-                alnfile=align_file, 
-                knowns=template_pdb, 
-                sequence=pdb_file[:-4],
-                assess_methods=(am.assess.DOPE),
-                inifile=pdb_file
-            )
-    model.starting_model = 1
-    model.ending_model = n
+    target_m8 =  os.path.join(target_folder, f"{target_structure}_{target_chain}.pdbfasta.m8")
+    run_mmseqs2(
+        target_fasta,
+        os.path.join(pdbfasta_folder, 'pdb_seqres_filtered.db'),
+        target_m8, 
+        iterations=3, 
+        skip_if_exists=True
+    )
+    process_m8_file(
+        target_m8, 
+        target, 
+        chain_id, 
+        top_hits=10, 
+        identity_threshold=0.9, 
+        skip_if_exists=True
+    )
     
-    model.make()
-    results = [res for res in model.outputs if res['failure'] is None]
-    results.sort(key=lambda a: a['DOPE score'])
+    target_ali_fasta = os.path.join(target_folder, f"{target}_{chain_id}", f"{target}_{chain_id}_aligned.fasta")
+    trim_alignment_to_target(target_ali_fasta, target, chain_id, skip_if_exists=True)
+    
+    return target_ali_fasta
 
-    return results[0]['name']
+
+def homology_model(pdb_file: str, n: int = 5):
+    target = pdb_file.split('_')[0]
+    chain_id = pdb_file.split('_')[1][0]
+    align_file = get_alignment(pdb_file, target, chain_id)
+    
+    output_folder = 'out'
+    build_homology_model(align_file, target, chain, output_folder)
+
+    return f'{output_folder}/{pdb_file}'
 
 
 def inpainting(pdb_file: str, sequence: str):
