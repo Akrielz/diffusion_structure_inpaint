@@ -59,10 +59,5 @@ RUN pip install -e .
 WORKDIR ${APP_PATH}/data
 RUN bash download_cath.sh
 
-# install FASPR package
-RUN pip install pybind11
-WORKDIR ${APP_PATH}/faspr
-RUN pip install -e .
-
 # Reset the working directory
 WORKDIR ${APP_PATH}
