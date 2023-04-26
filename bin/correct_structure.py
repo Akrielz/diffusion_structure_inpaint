@@ -391,15 +391,15 @@ def main():
     # generate_raports(args, final_sampled, output_dir, pdb_files, phi_idx, plotdir, psi_idx, sampled, sampled_angles_folder,
     #                  test_dset, test_values_stacked, train_dset)
 
-    # Iterate through the generated structures and compute their quality
-    determine_best_pdb("original_best.pdb", output_dir, pdb_files)
-    determine_best_pdb("fine_tuned_best.pdb", output_dir, fine_tuned_pdb_files)
-
     # add the old header to the fine-tuned and corrected pdb files
     header = read_pdb_header(reindex_pdb_file_path)
     for i, (fine_tuned, corrected) in enumerate(zip(fine_tuned_pdb_files, pdb_files)):
         add_header_info(header, fine_tuned)
         add_header_info(header, corrected)
+
+    # Iterate through the generated structures and compute their quality
+    determine_best_pdb("original_best.pdb", output_dir, pdb_files)
+    determine_best_pdb("fine_tuned_best.pdb", output_dir, fine_tuned_pdb_files)
 
 
 def prepare_output_dir(args):
