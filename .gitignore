@@ -5,6 +5,11 @@ data/cath/*
 data/alphafold/*.pdb.gz
 .history
 pdb_corrected
+*.pdb
+*.fasta
+*.db.*
+*.db_h.*
+mmseqs2
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
