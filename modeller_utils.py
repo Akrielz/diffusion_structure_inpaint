@@ -471,7 +471,7 @@ def build_homology_model(alignment_file, target_name, chain):
     mdl.make()
     modeled = mdl.outputs[0]['name']
 
-    # Align to initial with pymol super
+    # Align to initial file with pymol super
     cmd.reinitialize()
     cmd.load(modeled)
     cmd.load(f'{target_code}.pdb')
