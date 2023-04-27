@@ -3,7 +3,7 @@ from pathlib import Path
 from biotite.structure import check_bond_continuity
 from tqdm import tqdm
 
-from bin.structure_utils import read_pdb_file
+from binaries.structure_utils import read_pdb_file
 
 
 def main():

@@ -1,0 +1,26 @@
+import sys
+
+import binaries.af_make_input_dirs
+import binaries.annot_secondary_structures
+import binaries.baseline_sctm_scores_setup
+import binaries.correct_structure
+import binaries.correct_structures
+import binaries.hclust_structures
+import binaries.mds_structures
+import binaries.omegafold_across_gpus
+import binaries.partial_noise_reconstruct
+import binaries.pdb_to_residue_proteinmpnn
+import binaries.pdb_to_residues_esm
+import binaries.plot_angles_over_time
+import binaries.sample
+import binaries.sample_autoregressive
+import binaries.sample_plotting_only
+import binaries.sample_random_angles
+import binaries.sctm
+import binaries.splice_aa_onto_backbone
+import binaries.structure_utils
+import binaries.tmscore_training
+import binaries.train
+import binaries.train_autoregressive
+
+sys.path.append("/structure/binaries")

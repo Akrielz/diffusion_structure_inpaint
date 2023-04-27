@@ -4,7 +4,7 @@ import pandas as pd
 from tqdm import tqdm
 
 
-from bin.structure_utils import add_sequence_to_pdb_header
+from binaries.structure_utils import add_sequence_to_pdb_header
 
 
 def main():

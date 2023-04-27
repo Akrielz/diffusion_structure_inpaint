@@ -1,6 +1,6 @@
 import biotite
 
-from bin.structure_utils import read_pdb_file
+from binaries.structure_utils import read_pdb_file
 
 
 def main():

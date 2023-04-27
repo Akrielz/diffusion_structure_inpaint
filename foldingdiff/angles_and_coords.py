@@ -23,7 +23,7 @@ from biotite.structure import AtomArray
 from biotite.structure.io.pdb import PDBFile
 from biotite.sequence import ProteinSequence
 
-from bin.structure_utils import gradient_descent_on_physical_constraints, write_structure_to_pdb, filter_backbone
+from binaries.structure_utils import gradient_descent_on_physical_constraints, write_structure_to_pdb, filter_backbone
 from foldingdiff import nerf
 
 EXHAUSTIVE_ANGLES = ["phi", "psi", "omega", "tau", "CA:C:1N", "C:1N:1CA"]

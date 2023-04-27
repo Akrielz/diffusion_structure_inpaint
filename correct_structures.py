@@ -2,8 +2,8 @@ import json
 
 import biotite
 
-from bin.structure_utils import filter_backbone as filter_backbone_real, reindex_pdb_file
-from bin.structure_utils import filter_amino_acids as filter_amino_acids_real
+from binaries.structure_utils import filter_backbone as filter_backbone_real, reindex_pdb_file
+from binaries.structure_utils import filter_amino_acids as filter_amino_acids_real
 
 import os
 import argparse
@@ -15,11 +15,11 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from bin.correct_structure import prepare_output_dir, download_model, get_real_len_of_structure, compute_pad_len, \
+from binaries.correct_structure import prepare_output_dir, download_model, get_real_len_of_structure, compute_pad_len, \
     overwrite_the_angles, load_missing_info_mask, fine_tune_predictions
-from bin.sample import build_datasets, SEED, \
+from binaries.sample import build_datasets, SEED, \
     write_corrected_structures
-from bin.structure_utils import read_pdb_file, mock_missing_info_by_alignment, read_pdb_header, \
+from binaries.structure_utils import read_pdb_file, mock_missing_info_by_alignment, read_pdb_header, \
     add_header_info
 
 
