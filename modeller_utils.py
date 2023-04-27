@@ -4,7 +4,7 @@ from Bio.PDB.PDBExceptions import PDBConstructionWarning
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
-from modeller import Environ
+from modeller import Environ, Alignment
 from modeller.automodel import AutoModel
 
 import os
@@ -76,6 +76,38 @@ def extract_chain_to_fasta(pdb_file: str, chain_id: str, output_fasta: str, outp
     io = PDBIO()
     io.set_structure(structure)
     io.save(output_pdb, ChainSelect(chain_id))
+    return True
+
+def download_pdb_file(pdb_id: str, output_folder: str, skip_if_exists: bool = True):
+    """
+    Download the specified PDB file and save it in the given output folder.
+
+    Args:
+        pdb_id (str): The PDB ID of the structure to download.
+        output_folder (str): The folder in which to save the PDB file.
+        skip_if_exists (bool, optional): If True, skip the download if the file already exists.
+                                         Defaults to True.
+
+    Returns:
+        bool: True if the file is downloaded or already exists, False otherwise.
+    """
+    make_output_folder(output_folder)
+    pdb_file = os.path.join(output_folder, f"{pdb_id}.pdb")
+
+    if skip_if_exists and os.path.exists(pdb_file):
+        print(f"File '{pdb_file}' already exists. Skipping download.")
+        return True
+
+    command = f"pdb_fetch {pdb_id} > {pdb_file}"
+    process = subprocess.run(command, shell=True, capture_output=True, text=True)
+
+    if process.returncode != 0 or os.path.getsize(pdb_file) == 0:
+        print(f"Error downloading structure {pdb_id}.")
+        os.remove(pdb_file)
+        return False
+
+    print(f"Structure {pdb_id} downloaded successfully.")
+    return True
 
 
 def download_and_extract_pdb_seqres(output_folder, output_filename="pdb_seqres_filtered.fasta", skip_if_exists=True):
@@ -324,7 +356,24 @@ def trim_alignment_to_target(alignment_file: str, target_name: str, chain: str, 
 
     trimmed_alignment = alignment[:, start:end]
     AlignIO.write(trimmed_alignment, trimmed_ali_file, "fasta")
-    return True
+    return trimmed_ali_file
+
+
+def convert_to_pir(aln_file: str):
+    with open(aln_file) as f:
+        lines = f.readlines()
+
+    pir_lines = [c.replace('>', '>P1;') for c in lines]
+    s_ind = [i for i, c in enumerate(pir_lines) if '>' in c]
+    for i in s_ind:
+        pir_lines[i - 1] = pir_lines[i - 1].replace('\n', '*\n')
+    for i, j in enumerate(s_ind):
+        pir_lines.insert(i + j + 1, f"structure:{pir_lines[i + j].split(';')[-1][:-1]}:.:.:.:.::::\n")
+    
+    pir = f"{aln_file.split('.')[0]}.pir"
+    with open(pir, 'w') as f:
+        f.writelines(pir_lines)
+    return pir
 
 
 def reorder_alignment_file(input_alignment_file: str, target_name: str, chain: str, output_alignment_file: str):
@@ -367,9 +416,10 @@ def get_alignment(pdb_file: str, target: str, chain_id: str):
     create_mmseqs2_database(os.path.join(pdbfasta_folder, 'pdb_seqres_filtered.fasta'), pdbfasta_folder)
 
     target_folder = './pdb/modeller'
-    extract_chain_to_fasta(pdb_file, chain_id, f'{target}.fasta', pdb_file)
+    target_fasta = os.path.join(target_folder, f'{target}_{chain_id}.fasta')
+    extract_chain_to_fasta(pdb_file, chain_id, target_fasta, pdb_file)
     
-    target_m8 =  os.path.join(target_folder, f"{target_structure}_{target_chain}.pdbfasta.m8")
+    target_m8 =  os.path.join(target_folder, f"{target}_{chain_id}.pdbfasta.m8")
     run_mmseqs2(
         target_fasta,
         os.path.join(pdbfasta_folder, 'pdb_seqres_filtered.db'),
@@ -381,21 +431,21 @@ def get_alignment(pdb_file: str, target: str, chain_id: str):
         target_m8, 
         target, 
         chain_id, 
-        top_hits=10, 
+        top_hits=5, 
         identity_threshold=0.9, 
         skip_if_exists=True
     )
     
     target_ali_fasta = os.path.join(target_folder, f"{target}_{chain_id}", f"{target}_{chain_id}_aligned.fasta")
-    trim_alignment_to_target(target_ali_fasta, target, chain_id, skip_if_exists=True)
-    
-    return target_ali_fasta
+    trimmed_ali_fasta = trim_alignment_to_target(target_ali_fasta, target, chain_id, skip_if_exists=True)
+    ali_pir = convert_to_pir(trimmed_ali_fasta)
+    return ali_pir
 
 
 def build_homology_model(alignment_file, target_name, chain):
     env = Environ()
     target_code = f"{target_name}_{chain}"
-    env.io.atom_files_directory = ['.', f'{target_code}', 'pdb/modeller/{target_code}']
+    env.io.atom_files_directory = ['.', f'{target_code}', f'pdb/modeller/{target_code}']
     
     aln = Alignment(env)
     aln.read(file=alignment_file, alignment_format='PIR')
