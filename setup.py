@@ -25,8 +25,8 @@ setup(
         "astropy",
         "gitpython",
         "biotite",
-        "requests"
-        "biopython"
+        "requests",
+        "biopython",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
