@@ -19,9 +19,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 import torch
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
-import torch.nn.functional as F
 
 import pytorch_lightning as pl
 from pytorch_lightning.strategies.ddp import DDPStrategy
@@ -36,7 +35,6 @@ from foldingdiff import plotting
 from foldingdiff import utils
 from foldingdiff import custom_metrics as cm
 
-assert torch.cuda.is_available(), "Requires CUDA to train"
 # reproducibility
 torch.manual_seed(6489)
 # torch.use_deterministic_algorithms(True)
@@ -562,6 +560,7 @@ def main():
 
 
 if __name__ == "__main__":
+    assert torch.cuda.is_available(), "Requires CUDA to train"
     curr_time = datetime.now().strftime("%y%m%d_%H%M%S")
     logging.basicConfig(
         level=logging.INFO,

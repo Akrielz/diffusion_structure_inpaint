@@ -26,6 +26,7 @@ setup(
         "gitpython",
         "biotite",
         "requests"
+        "biopython"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
