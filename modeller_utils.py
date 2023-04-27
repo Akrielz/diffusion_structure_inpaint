@@ -6,6 +6,7 @@ from Bio.SeqRecord import SeqRecord
 
 from modeller import Environ, Alignment
 from modeller.automodel import AutoModel
+from pymol import cmd
 
 import os
 import subprocess
@@ -468,4 +469,14 @@ def build_homology_model(alignment_file, target_name, chain):
     
     # Build the model
     mdl.make()
-    return mdl.outputs[0]['name']
+    modeled = mdl.outputs[0]['name']
+
+    # Align to initial with pymol super
+    cmd.reinitialize()
+    cmd.load(modeled)
+    cmd.load(f'{target_code}.pdb')
+    cmd.super(modeled[:-4], target_code)
+    cmd.delete(target_code)
+    cmd.save(f'{target_code}_templated.pdb')
+
+    return f'{target_code}_templated.pdb'
