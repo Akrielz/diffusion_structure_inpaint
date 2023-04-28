@@ -96,7 +96,3 @@ def batch_pipeline(pdb_files: List[str]):
     passed.extend(inpainting_passed)
     
     return passed, failed
-
-
-if __name__ == '__main__':
-    pipeline('5f3b_C.pdb')

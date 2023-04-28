@@ -4,7 +4,7 @@ from Bio.PDB.PDBExceptions import PDBConstructionWarning
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
-from modeller import Environ, Alignment
+from modeller import Environ, Alignment, SequenceMismatchError
 from modeller.automodel import AutoModel
 from pymol import cmd
 
@@ -324,7 +324,7 @@ def trim_alignment_to_target(alignment_file: str, target_name: str, chain: str, 
 
     if skip_if_exists and os.path.exists(trimmed_ali_file):
         print(f"File '{trimmed_ali_file}' already exists. Skipping trimming.")
-        return True
+        return trimmed_ali_file
 
     alignment = AlignIO.read(alignment_file, "fasta")
     target_seq = None
@@ -335,8 +335,7 @@ def trim_alignment_to_target(alignment_file: str, target_name: str, chain: str, 
             break
 
     if target_seq is None:
-        print(f"Target sequence '{target_name}_{chain}' not found in the alignment.")
-        return False
+        raise Exception(f"Target sequence '{target_name}_{chain}' not found in the alignment.")
 
     start = None
     end = None
@@ -352,8 +351,7 @@ def trim_alignment_to_target(alignment_file: str, target_name: str, chain: str, 
             break
 
     if start is None or end is None:
-        print("Error finding start and end positions of the target sequence.")
-        return False
+        raise Exception("Error finding start and end positions of the target sequence.")
 
     trimmed_alignment = alignment[:, start:end]
     AlignIO.write(trimmed_alignment, trimmed_ali_file, "fasta")
@@ -432,7 +430,7 @@ def get_alignment(pdb_file: str, target: str, chain_id: str):
         target_m8, 
         target, 
         chain_id, 
-        top_hits=5, 
+        top_hits=10, 
         identity_threshold=0.9, 
         skip_if_exists=True
     )
@@ -449,26 +447,43 @@ def build_homology_model(alignment_file, target_name, chain):
     env.io.atom_files_directory = ['.', f'{target_code}', f'pdb/modeller/{target_code}']
     
     aln = Alignment(env)
-    aln.read(file=alignment_file, alignment_format='PIR')
-    template_codes = [prot.code for prot in aln if prot.code != target_code]
 
-    # Create a new automodel object
-    class MyModel(AutoModel):
-        def select_atoms(self):
-            return selection(self.residue_range(f'1:A', f'1:A'))
+    def make_model(aln, alignment_file, target_code):
+        aln.read(file=alignment_file, alignment_format='PIR')
+        template_codes = [prot.code for prot in aln if prot.code != target_code]
 
-    mdl = AutoModel(
-        env, 
-        alnfile=alignment_file, 
-        knowns=template_codes, 
-        sequence=target_code, 
-        inifile=target_code
-    )
-    mdl.starting_model = 1
-    mdl.ending_model = 1
-    
-    # Build the model
-    mdl.make()
+        mdl = AutoModel(
+            env, 
+            alnfile=alignment_file, 
+            knowns=template_codes, 
+            sequence=target_code, 
+            inifile=target_code
+        )
+        mdl.starting_model = 1
+        mdl.ending_model = 1
+        
+        # Build the model
+        mdl.make()
+        return mdl
+
+    # Make model with hits, if unsuccessful try one less hit until no more
+    while True:
+        try:
+            mdl = make_model(aln, alignment_file, target_code)
+        except:
+            with open(alignment_file, 'r+') as f:
+                lines = f.readlines()
+                f.seek(0)
+                f.truncate()
+                hit_idxs = [i for i, ln in enumerate(lines) if '>P1;' in ln]
+                if not hit_idxs:
+                    print("Could not model homology with any hits")
+                    return f'{target_code}.pdb'
+                f.writelines(lines[:hit_idxs[-1]])
+            continue
+
+        break
+
     modeled = mdl.outputs[0]['name']
 
     # Align to initial file with pymol super
