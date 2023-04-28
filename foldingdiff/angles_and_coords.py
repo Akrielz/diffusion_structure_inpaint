@@ -23,6 +23,7 @@ from biotite.structure import AtomArray
 from biotite.structure.io.pdb import PDBFile
 from biotite.sequence import ProteinSequence
 
+from binaries.structure_utils import gradient_descent_on_physical_constraints, write_structure_to_pdb, filter_backbone
 from foldingdiff import nerf
 
 EXHAUSTIVE_ANGLES = ["phi", "psi", "omega", "tau", "CA:C:1N", "C:1N:1CA"]
@@ -61,7 +62,7 @@ def canonical_distances_and_dihedrals(
     non_dihedral_angles = [a for a in angles if a not in calc_angles]
     # Gets the N - CA - C for each residue
     # https://www.biotite-python.org/apidoc/biotite.structure.filter_backbone.html
-    backbone_atoms = source_struct[struc.filter_backbone(source_struct)]
+    backbone_atoms = source_struct[filter_backbone(source_struct)]
     for a in non_dihedral_angles:
         if a == "tau" or a == "N:CA:C":
             # tau = N - CA - C internal angles
@@ -121,7 +122,11 @@ def canonical_distances_and_dihedrals(
             raise ValueError(f"Unrecognized distance: {d}")
         calc_angles[d] = struc.index_distance(backbone_atoms, indices=idx)
 
-    return pd.DataFrame({k: calc_angles[k].squeeze() for k in distances + angles})
+    try:
+        return pd.DataFrame({k: calc_angles[k].squeeze() for k in distances + angles})
+    except ValueError:
+        logging.debug(f"{fname} contains a malformed structure - skipping")
+        return None
 
 
 def compute_coords_from_all(phi, psi, omega, tau, CAC1N, C1NCA):
@@ -274,13 +279,13 @@ def combine_original_with_predicted_structure(
 
 
 def create_corrected_structure(
-        out_fname: str,
+        output_file: str,
         angles: pd.DataFrame,
         initial_atom_array: AtomArray,
         replaced_info_mask: torch.Tensor,
 ) -> str:
     # Convert the replaced info mask to a numpy array
-    replaced_info_mask = replaced_info_mask.cpu()[0].numpy().astype(bool)
+    replaced_info_mask = replaced_info_mask.cpu().numpy().astype(bool)
 
     # Extract the already_given_coords for the NERF model
     already_given_coords = extract_backbone_from_struct(initial_atom_array, replaced_info_mask)
@@ -301,8 +306,8 @@ def create_corrected_structure(
     )
 
     # Write the new structure to a PDB file
-    write_atom_array_to_pdb(new_atom_array, out_fname)
-    return out_fname
+    write_structure_to_pdb(new_atom_array, output_file)
+    return output_file
 
 
 def extract_backbone_from_struct(initial_atom_array, replaced_info_mask):
@@ -438,14 +443,6 @@ def compute_nerf_kwargs(angles_to_set, dists_and_angles, dists_to_set, required_
     return nerf_build_kwargs
 
 
-def write_atom_array_to_pdb(atom_array: AtomArray, out_fname: str) -> str:
-    sink = PDBFile()
-    sink.set_structure(atom_array)
-    sink.write(out_fname)
-
-    return out_fname
-
-
 def write_coords_to_pdb(coords: np.ndarray, out_fname: str) -> str:
     """
     Write the coordinates to the given pdb fname
@@ -525,7 +522,7 @@ def get_pdb_length(fname: str) -> int:
     if structure.get_model_count() > 1:
         return -1
     chain = structure.get_structure()[0]
-    backbone = chain[struc.filter_backbone(chain)]
+    backbone = chain[filter_backbone(chain)]
     l = int(len(backbone) / 3)
     return l
 
@@ -540,7 +537,7 @@ def extract_backbone_coords(
     if structure.get_model_count() > 1:
         return None
     chain = structure.get_structure()[0]
-    backbone = chain[struc.filter_backbone(chain)]
+    backbone = chain[filter_backbone(chain)]
     ca = [c for c in backbone if c.atom_name in atoms]
     coords = np.vstack([c.coord for c in ca])
     return coords
@@ -590,7 +587,7 @@ def collect_aa_sidechain_angles(
             continue
         if residue in retval:
             continue
-        backbone_mask = struc.filter_backbone(res_atoms)
+        backbone_mask = filter_backbone(res_atoms)
         a, b, c = res_atoms[backbone_mask].coord  # Backbone
         for sidechain_atom in res_atoms[~backbone_mask]:
             d = sidechain_atom.coord

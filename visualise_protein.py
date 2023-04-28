@@ -1,33 +1,21 @@
-from bin.structure_utils import read_pdb_file
+import biotite
+
+from binaries.structure_utils import read_pdb_file
 
 
 def main():
-    # fname = "pdb_to_correct/2ZJR_W.pdb"
-    # fname = "pdb_corrected/sampled_pdb/generated_1.pdb"
-    # fname = "pdb_to_correct/2ZJR_W.pdb"
-    # fname = "/home/alexandru/code/foldingdiff/data/cath/dompdb/2pfuA01"
-    # fname = "generated_data_now_1/sampled_pdb/generated_0.pdb"
-
-    # fname = "pdb_to_correct/generated_0.pdb"
-    # fname = "pdb_corrected/sampled_pdb/generated_0.pdb"
-    # fname = "pdb_to_correct/generated_0_long.pdb"
-
-    # fname = "pdb_to_correct/1jrh.pdb"
-
-    # fname = "pdb_to_correct/5f3b.pdb"
-    # fname = "pdb_to_correct/6e63.pdb"
-
-    fname = "pdb_to_correct/5f3b.pdb"
+    # fname = "pdb_to_correct/s1/1AHW_C.pdb"
+    # fname = "pdb_to_correct/2ZJR_W_broken.pdb"
+    # fname = "pdb_to_correct/mocked.pdb"
+    # fname = "pdb_corrected/best_pdb/original_best.pdb"
+    # fname = "pdb_corrected/fine_tuned/1AHW_C.pdb"
+    # fname = "pdb_corrected/corrected_structures/1AHW_C.pdb"
+    fname = "pdb_corrected_s1_header/fine_tuned/4K24_U.pdb"
 
     source_struct = read_pdb_file(fname)
+
     # filter just the CA
     source_struct = source_struct[source_struct.atom_name == "CA"]
-
-    # filter out only for chain C
-    source_struct = source_struct[source_struct.chain_id == "C"]
-
-    # only first 30 residues
-    source_struct = source_struct[:30]
 
     # Get the atom coordinates
     coords = source_struct.coord
@@ -44,10 +32,8 @@ def main():
 
     color_map = {
         0: 'green',
-        9: 'red',
-        19: 'green',
-        130: 'blue',
-        140: 'green'
+        82: 'red',
+        90: 'green',
     }
 
     # limit = 50
@@ -60,9 +46,6 @@ def main():
         # # plot lines
         if i in color_map:
             color = color_map[i]
-
-        # if source_struct[i].chain_id in color_map:
-        #     color = color_map[source_struct[i].chain_id]
 
         ax.plot(
             [coords[i][0], coords[i+1][0]],
